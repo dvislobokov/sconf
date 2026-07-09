@@ -1,0 +1,56 @@
+# Базовая конфигурация сервиса. Секреты и оверрайды приходят из других слоёв
+# (secrets.toml, переменные среды, аргументы командной строки).
+
+app:
+  name: orders-api
+  env: production        # enum: development|staging|production
+  version: 1.4.2
+
+http:
+  host: 0.0.0.0
+  port: 8080
+  cors:
+    # разбирается кастомным Unmarshaler (CSV -> []string)
+    origins: https://app.example.com, https://admin.example.com
+  timeouts:
+    read: 5s
+    write: 10s
+    idle: 120s
+
+logging:
+  level: info            # enum: debug|info|warn|error
+  format: json           # enum: json|text
+
+database:
+  driver: postgres       # enum: postgres|mysql|sqlite
+  host: db.internal
+  port: 5432
+  name: orders
+  user: orders_rw
+  pool:
+    maxOpen: 25
+    maxIdle: 5
+    lifetime: 30m
+  replicas:
+    - host: db-replica-1.internal
+      port: 5432
+    - host: db-replica-2.internal
+      port: 5432
+
+redis:
+  addr: redis.internal:6379
+  db: 0
+
+features:
+  new_checkout: true
+  beta_search: false
+
+services:
+  - name: payments
+    url: https://payments.internal
+    retries: 3
+    backoff: 200ms
+  - name: inventory
+    url: https://inventory.internal
+    retries: 5
+    backoff: 100ms

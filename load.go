@@ -1,0 +1,57 @@
+package sconf
+
+import (
+	"errors"
+	"fmt"
+	"os"
+
+	"github.com/dvislobokov/sconf/bind"
+)
+
+// ErrHelp возвращается Load, если в аргументах запрошена справка. К этому
+// моменту usage уже напечатан в stdout — вызывающему остаётся завершить
+// программу. Мирроринг поведения flag.ErrHelp из стандартной библиотеки.
+var ErrHelp = errors.New("config: help requested")
+
+// Load — основная точка входа. Она:
+//
+//  1. если в args есть флаг справки (--help и т.п.) — печатает usage,
+//     сгенерированный из T, и возвращает ErrHelp;
+//  2. добавляет args последним (высшим по приоритету) слоем командной строки;
+//  3. собирает конфигурацию из builder и биндит её в новое значение *T.
+//
+// Обычно args — это os.Args[1:]. Передайте nil, чтобы не подключать
+// командную строку и не проверять справку.
+//
+//	cfg, err := sconf.Load[Config](
+//	    sconf.New().
+//	        AddYAMLFile("appsettings.yaml").
+//	        AddEnvironmentVariables("APP_"),
+//	    os.Args[1:],
+//	)
+//	switch {
+//	case errors.Is(err, sconf.ErrHelp):
+//	    os.Exit(0)
+//	case err != nil:
+//	    log.Fatal(err)
+//	}
+func Load[T any](b *Builder, args []string) (*T, error) {
+	if HelpRequested(args) {
+		fmt.Fprint(os.Stdout, Usage[T]())
+		return nil, ErrHelp
+	}
+	if len(args) > 0 {
+		b.AddCommandLine(args)
+	}
+
+	cfg, err := b.Build()
+	if err != nil {
+		return nil, err
+	}
+
+	out := new(T)
+	if err := bind.Bind(cfg.m, "", out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
