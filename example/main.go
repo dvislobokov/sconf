@@ -136,9 +136,9 @@ func main() {
 	//   - перекрытие скаляра
 	//   - перекрытие одного поля элемента массива (реплики)
 	//   - добавление фича-флага
-	os.Setenv("APP_HTTP__PORT", "9090")
-	os.Setenv("APP_DATABASE__REPLICAS__0__HOST", "db-replica-1b.internal")
-	os.Setenv("APP_FEATURES__BETA_SEARCH", "true")
+	_ = os.Setenv("APP_HTTP__PORT", "9090")
+	_ = os.Setenv("APP_DATABASE__REPLICAS__0__HOST", "db-replica-1b.internal")
+	_ = os.Setenv("APP_FEATURES__BETA_SEARCH", "true")
 
 	// Одна точка входа: собирает слои, проверяет --help и биндит в *Config.
 	// Аргументы командной строки Load подмешивает сам, последним слоем.

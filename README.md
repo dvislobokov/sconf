@@ -1,5 +1,7 @@
 # sconf
 
+[![CI](https://github.com/dvislobokov/sconf/actions/workflows/ci.yml/badge.svg)](https://github.com/dvislobokov/sconf/actions/workflows/ci.yml)
+
 Конфигурационная библиотека для Go в духе `Microsoft.Extensions.Configuration`
 (ASP.NET Core). Без `viper`.
 
