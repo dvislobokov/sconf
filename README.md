@@ -1,59 +1,82 @@
 # sconf
 
 [![CI](https://github.com/dvislobokov/sconf/actions/workflows/ci.yml/badge.svg)](https://github.com/dvislobokov/sconf/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/dvislobokov/sconf.svg)](https://pkg.go.dev/github.com/dvislobokov/sconf)
 
-Конфигурационная библиотека для Go в духе `Microsoft.Extensions.Configuration`
-(ASP.NET Core). Без `viper`.
+A layered configuration library for Go, modeled after
+`Microsoft.Extensions.Configuration` (ASP.NET Core). **No `viper`.**
 
-Все источники сводятся к плоской модели «путь → строка» с разделителем `:`
-(`servers:0:host`). Слои мержатся по порядку (последний выигрывает per key),
-после чего любая структура биндится единообразно из любого источника — включая
-**массивы объектов из переменных среды**.
+Every source is reduced to a single flat model — `path → string`, with `:` as
+the separator (`servers:0:host`). Layers are merged in order (last one wins, per
+key), and any struct binds uniformly from any source — including **arrays of
+objects assembled from environment variables**.
 
-## Установка
+```go
+type Config struct {
+    Host    string        `default:"0.0.0.0"`
+    Port    int           `default:"8080"`
+    Mode    string        `enum:"dev,prod" default:"dev"`
+    Servers []struct{ Host string; Port int }
+}
+
+cfg, err := sconf.Load[Config](
+    sconf.New().
+        AddYAMLFile("appsettings.yaml", sconf.Optional()).
+        AddEnvironmentVariables("APP_"),
+    os.Args[1:],
+)
+```
+
+## Features
+
+- **Formats out of the box:** JSON, YAML, TOML, environment variables, command
+  line, in-memory.
+- **Env → arrays of objects** using the `__` → `:` convention.
+- **Per-key override** of a single array element from an env var — something
+  viper can't do.
+- **Wait for files** to appear on disk (Vault sidecar) and **optional** files.
+- Reflection binding; key names come from `json` / `yaml` / `toml` / `name` tags.
+- `default` (fallback value) and `enum` (allowed values + validation) tags.
+- **Usage auto-generation** from your struct, with built-in `--help` handling.
+- One entry point — `Load[T]` — plus `Unmarshaler` / `Validator` hooks and
+  typed sentinel errors.
+
+## Install
 
 ```sh
 go get github.com/dvislobokov/sconf
 ```
 
-## Возможности
+Requires Go 1.24+.
 
-- Из коробки: **JSON**, **YAML**, **TOML**, переменные среды, аргументы CLI, in-memory.
-- Переменные среды → массивы объектов (соглашение `__` → `:`).
-- Переопределение отдельного элемента массива из env (чего не умеет viper).
-- **Ожидание** появления файла на ФС (Vault sidecar) и **опциональные** файлы.
-- Биндинг рефлексией; имена ключей — из тегов `json`/`yaml`/`toml`/`name`.
-- Теги `default` (значение по умолчанию) и `enum` (допустимые значения + валидация).
-- **Автогенерация usage** из структуры (`Usage[T]`) и детект `--help`.
-- Дженерик `Get[T]`, секции, sentinel-ошибки, интерфейсы `Unmarshaler`/`Validator`.
+## Packages
 
-## Структура пакетов
+| Package | Contents |
+|---------|----------|
+| `sconf` | `Builder`, `Config`, `Load[T]`, `Usage[T]`, errors, option re-exports |
+| `sconf/provider` | `JSONFile`, `YAMLFile`, `TOMLFile`, `Env`, `Args`, `Map` |
+| `sconf/bind` | reflection binder (`Unmarshaler`, `Validator`) |
+| `sconf/internal/flat` | the flat model and path utilities |
 
-```
-sconf                Builder, Config, Load[T], Usage[T], ошибки, ре-экспорт опций
-sconf/provider       JSONFile, YAMLFile, TOMLFile, Env, Args, Map
-sconf/bind           reflection-биндер (Unmarshaler, Validator)
-sconf/internal/flat  плоская модель и утилиты путей
-```
+## Table of contents
 
-## Оглавление примеров
+- [Quick start](#quick-start)
+- [Layering and precedence](#layering-and-precedence)
+- [Environment variables → arrays of objects](#environment-variables--arrays-of-objects)
+- [The entry point: `Load[T]`](#the-entry-point-loadt)
+- [Ad-hoc access and sections](#ad-hoc-access-and-sections)
+- [Waiting for files (Vault sidecar) and optional files](#waiting-for-files-vault-sidecar-and-optional-files)
+- [Field tags](#field-tags)
+- [Defaults: the `default` tag](#defaults-the-default-tag)
+- [Allowed values: the `enum` tag](#allowed-values-the-enum-tag)
+- [Usage generation and `--help`](#usage-generation-and---help)
+- [Custom parsing: `Unmarshaler`](#custom-parsing-unmarshaler)
+- [Validation: `Validator`](#validation-validator)
+- [Error handling](#error-handling)
+- [Writing a custom source](#writing-a-custom-source)
+- [Full example](#full-example)
 
-- [Быстрый старт](#быстрый-старт)
-- [Мерж слоёв и приоритеты](#мерж-слоёв-и-приоритеты)
-- [Переменные среды → массивы объектов](#переменные-среды--массивы-объектов)
-- [Точка входа: Load\[T\]](#точка-входа-loadt)
-- [Точечный доступ и секции](#точечный-доступ-и-секции)
-- [Ожидание файла (Vault sidecar) и опциональность](#ожидание-файла-vault-sidecar-и-опциональность)
-- [Теги полей](#теги-полей)
-- [Значения по умолчанию: default](#значения-по-умолчанию-default)
-- [Допустимые значения: enum](#допустимые-значения-enum)
-- [Автогенерация usage и --help](#автогенерация-usage-и---help)
-- [Кастомный разбор: Unmarshaler](#кастомный-разбор-unmarshaler)
-- [Валидация: Validator](#валидация-validator)
-- [Обработка ошибок](#обработка-ошибок)
-- [Свой источник](#свой-источник)
-
-## Быстрый старт
+## Quick start
 
 `appsettings.yaml`:
 
@@ -98,18 +121,18 @@ type Settings struct {
 }
 
 func main() {
-    // Load собирает слои, проверяет --help и биндит в *Settings.
-    // Аргументы командной строки Load подмешивает сам, последним слоем.
+    // Load merges the layers, handles --help, and binds into *Settings.
+    // The command-line arguments are folded in by Load itself, as the top layer.
     s, err := sconf.Load[Settings](
         sconf.New().
             AddYAMLFile("appsettings.yaml").
-            AddYAMLFile("appsettings.local.yaml", sconf.Optional()). // локальные оверрайды
-            AddEnvironmentVariables("MYAPP_"),                       // env перекрывает файлы
+            AddYAMLFile("appsettings.local.yaml", sconf.Optional()). // local overrides
+            AddEnvironmentVariables("MYAPP_"),                       // env beats files
         os.Args[1:],
     )
     switch {
     case errors.Is(err, sconf.ErrHelp):
-        os.Exit(0) // usage уже напечатан внутри Load
+        os.Exit(0) // usage already printed by Load
     case err != nil:
         log.Fatal(err)
     }
@@ -117,19 +140,10 @@ func main() {
 }
 ```
 
-`Load[T](builder, args)` — основная точка входа:
+## Layering and precedence
 
-1. если в `args` есть флаг справки (`--help` и т.п.) — печатает usage,
-   сгенерированный из `T`, и возвращает `sconf.ErrHelp`;
-2. подмешивает `args` последним (высшим по приоритету) слоем командной строки;
-3. собирает конфигурацию и биндит её в новое значение `*T`.
-
-Передайте `nil` вместо `args`, чтобы не подключать CLI и не проверять справку.
-
-## Мерж слоёв и приоритеты
-
-Провайдеры применяются по порядку добавления, **последний выигрывает per key**.
-Значения объединяются по отдельным ключам, а не целыми файлами:
+Providers are applied in the order they are added, and **the last one wins, per
+key**. Values are merged key by key, not whole file by whole file:
 
 ```go
 cfg, _ := sconf.New().
@@ -140,13 +154,14 @@ cfg, _ := sconf.New().
     AddEnvironmentVariables("APP_"). // APP_DATABASE__HOST=prod-db
     Build()
 
-cfg.GetString("database:host")  // "prod-db"  (перекрыто из env)
-cfg.GetInt("database:port", 0)  // 5432       (осталось из in-memory)
+cfg.GetString("database:host")  // "prod-db"  (overridden by env)
+cfg.GetInt("database:port", 0)  // 5432       (kept from in-memory)
 ```
 
-## Переменные среды → массивы объектов
+## Environment variables → arrays of objects
 
-Двойное подчёркивание `__` — разделитель уровней (как в ASP.NET Core):
+A double underscore `__` maps to the level separator (the ASP.NET Core
+convention):
 
 ```
 MYAPP_SERVERS__0__HOST=a   MYAPP_SERVERS__0__PORT=10
@@ -164,120 +179,119 @@ s, _ := sconf.Load[Settings](sconf.New().AddEnvironmentVariables("MYAPP_"), nil)
 // s.Servers == [{a 10} {b 20}]
 ```
 
-Поскольку всё сводится к одной плоской модели, env-переменная может перекрыть
-**один элемент** массива из файла. Файл задаёт `servers[0] = {file, 1}`, а
-`MYAPP_SERVERS__0__HOST=env` заменит только `host`:
+Because everything collapses into one flat model, an env var can override a
+**single element** of an array defined in a file. If the file sets
+`servers[0] = {file, 1}`, then `MYAPP_SERVERS__0__HOST=env` replaces only
+`host`:
 
 ```go
 // servers[0] == {Host: "env", Port: 1}
 ```
 
-## Точка входа: Load[T]
+## The entry point: `Load[T]`
 
-`Load[T]` — единственный способ получить типизированную конфигурацию: он
-собирает слои, обрабатывает `--help` и возвращает `*T`.
+`Load[T]` is the one way to obtain typed configuration. It merges the layers,
+handles `--help`, and returns a `*T`.
 
 ```go
-type Settings struct {
-    Database struct {
-        Host string
-        Port int
-        SSL  bool
-    }
-}
-
 s, err := sconf.Load[Settings](
     sconf.New().
         AddYAMLFile("appsettings.yaml").
         AddEnvironmentVariables("APP_"),
-    os.Args[1:], // или nil, если CLI и --help не нужны
+    os.Args[1:], // or nil, if you don't want CLI args or --help
 )
 if err != nil {
-    // errors.Is(err, sconf.ErrHelp) — была запрошена справка (usage напечатан)
+    // errors.Is(err, sconf.ErrHelp) — help was requested (usage already printed)
     log.Fatal(err)
 }
-_ = s.Database.Host
 ```
 
-При отсутствии данных для поля остаётся нулевое значение (либо `default`,
-если задан тег). Ошибок «ключа нет» нет — конфигурация best-effort.
+`Load[T](builder, args)`:
 
-## Точечный доступ и секции
+1. if `args` contains a help flag (`--help`, `-h`, `-?`, `/?`, …), it prints the
+   usage generated from `T` and returns `sconf.ErrHelp`;
+2. folds `args` in as the last (highest-priority) command-line layer;
+3. builds the configuration and binds it into a fresh `*T`.
 
-Для динамического доступа без структуры используйте `Build() *Config` и его
-геттеры:
+Missing data is not an error — binding is best-effort: a field with no value
+keeps its zero value (or its `default`, if the tag is set).
+
+## Ad-hoc access and sections
+
+For dynamic access without a struct, use `Build() *Config` and its getters:
 
 ```go
 cfg, _ := sconf.New().AddYAMLFile("appsettings.yaml").Build()
 
 cfg.GetString("database:host")
-cfg.GetInt("database:port", 5432) // с дефолтом
+cfg.GetInt("database:port", 5432) // with a fallback
 cfg.GetBool("database:ssl", false)
 cfg.Exists("database")            // true
 cfg.GetChildren("database")       // ["host", "port", "ssl"]
 
-db := cfg.Section("database")     // вложенная секция
-db.GetString("host")              // как cfg.GetString("database:host")
+db := cfg.Section("database")     // a nested section
+db.GetString("host")              // same as cfg.GetString("database:host")
 ```
 
-## Ожидание файла (Vault sidecar) и опциональность
+## Waiting for files (Vault sidecar) and optional files
 
-Когда секрет монтируется sidecar-контейнером (например Vault Agent), файла
-может ещё не быть на старте. `Wait` блокирует `Build`, пока файл не появится;
-`Optional` не даёт упасть, если файла нет или он не появился за таймаут:
+When a secret is mounted by a sidecar (e.g. Vault Agent), the file may not exist
+yet at startup. `Wait` blocks until the file appears; `Optional` keeps the build
+from failing if the file is missing or never shows up before the timeout:
 
 ```go
 cfg, err := sconf.New().
-    AddJSONFile("appsettings.json").                    // обязателен: нет файла -> ошибка
-    AddJSONFile("appsettings.local.json", sconf.Optional()). // нет файла -> пропускаем
+    AddJSONFile("appsettings.json").                         // required: missing -> error
+    AddJSONFile("appsettings.local.json", sconf.Optional()). // missing -> skipped
     AddJSONFile(
         "/vault/secrets/db.json",
-        sconf.Wait(30*time.Second),          // ждать появления до 30с
+        sconf.Wait(30*time.Second),          // wait up to 30s for it to appear
         sconf.PollInterval(200*time.Millisecond),
-        sconf.Optional(),                    // не появился -> не падаем
+        sconf.Optional(),                    // never appeared -> don't fail
     ).
     Build()
 ```
 
-| Опция | Назначение |
-|-------|-----------|
-| `sconf.Optional()` | не падать, если файла нет / он не появился |
-| `sconf.Wait(timeout)` | ждать появления файла (`0` — без ограничения) |
-| `sconf.PollInterval(d)` | интервал опроса ФС при ожидании (по умолчанию 200ms) |
+| Option | Effect |
+|--------|--------|
+| `sconf.Optional()` | don't fail if the file is missing / never appears |
+| `sconf.Wait(timeout)` | wait for the file to appear (`0` = wait forever) |
+| `sconf.PollInterval(d)` | filesystem poll interval while waiting (default 200ms) |
 
-## Теги полей
+## Field tags
 
-Имя ключа берётся из тегов `json` → `yaml` → `toml` → `name` (первый непустой),
-иначе — имя поля. Тег `-` пропускает поле. Сравнение регистронезависимо.
+The key name is taken from the `json`, `yaml`, `toml`, or `name` tag (the first
+non-empty one), otherwise from the field name. A `-` tag skips the field.
+Matching is case-insensitive.
 
 ```go
 type Settings struct {
     Addr    string `json:"listen_addr"`
     Level   string `yaml:"log_level"`
     Region  string `name:"region"`
-    private string // неэкспортируемое — пропускается
-    Secret  string `json:"-"` // явно пропущено
+    private string // unexported — skipped
+    Secret  string `json:"-"` // explicitly skipped
 }
 ```
 
-Поддерживаемые типы: примитивы, `time.Duration` (`"5s"`), `time.Time` (RFC3339),
-`*T`, `[]T`, `map[string]T`, вложенные и встроенные (embedded) структуры.
-Дыры в индексах массивов допустимы — элементы схлопываются по порядку.
+Supported types: primitives, `time.Duration` (`"5s"`), `time.Time` (RFC 3339),
+`*T`, `[]T`, `map[string]T`, nested and embedded structs. Gaps in array indices
+are allowed — elements collapse in order.
 
-Полный набор тегов:
+The full set of tags:
 
-| Тег | Назначение |
-|-----|-----------|
-| `json` / `yaml` / `toml` / `name` | имя ключа (первый непустой) |
-| `-` (в json/yaml/toml/name) | пропустить поле |
-| `default:"..."` | значение по умолчанию, если ключа нет в источниках |
-| `enum:"a,b,c"` | список допустимых значений (валидация + вывод в usage) |
-| `description:"..."` / `usage:"..."` | описание для usage (первый непустой) |
+| Tag | Purpose |
+|-----|---------|
+| `json` / `yaml` / `toml` / `name` | key name (first non-empty) |
+| `-` (in json/yaml/toml/name) | skip the field |
+| `default:"…"` | fallback value when no source provides the key |
+| `enum:"a,b,c"` | closed set of allowed values (validated + shown in usage) |
+| `description:"…"` / `usage:"…"` | description for usage (first non-empty) |
 
-## Значения по умолчанию: default
+## Defaults: the `default` tag
 
-Если ни один источник не задал ключ, используется значение из тега `default`.
-Любой источник (файл, env, CLI) перекрывает его.
+If no source sets a key, the `default` tag value is used. Any source (file, env,
+CLI) overrides it.
 
 ```go
 type Settings struct {
@@ -286,29 +300,29 @@ type Settings struct {
     Timeout time.Duration `default:"15s"`
 }
 
-var s Settings
-cfg.Bind("", &s) // при пустой конфигурации: {0.0.0.0 8080 15s}
+// with empty configuration: {0.0.0.0 8080 15s}
 ```
 
-## Допустимые значения: enum
+## Allowed values: the `enum` tag
 
-Тег `enum` задаёт закрытый список. Значение (в т.ч. из `default`) проверяется
-при биндинге регистронезависимо и приводится к каноничному написанию из списка;
-недопустимое значение возвращает ошибку с `errors.Is(err, sconf.ErrEnum)`.
+The `enum` tag defines a closed set. The value (including one coming from
+`default`) is checked at bind time, case-insensitively, and normalized to the
+canonical spelling from the list. An invalid value returns an error that
+satisfies `errors.Is(err, sconf.ErrEnum)`.
 
 ```go
 type Settings struct {
     Level string `enum:"debug,info,warn,error" default:"info"`
 }
 
-// LEVEL=INFO   -> Level == "info"  (канонизировано)
-// LEVEL=trace  -> ошибка: config: "Level" = "trace": config: value not allowed (allowed: debug, info, warn, error)
+// LEVEL=INFO   -> Level == "info"  (canonicalized)
+// LEVEL=trace  -> error: config: "Level" = "trace": config: value not allowed (allowed: debug, info, warn, error)
 ```
 
-## Автогенерация usage и --help
+## Usage generation and `--help`
 
-`Load` проверяет `--help` сам и печатает справку, сгенерированную из полей
-структуры (путь-ключ, тип, `enum`, `default`, описание):
+`Load` checks for `--help` itself and prints help generated from the struct's
+fields (key path, type, `enum`, `default`, description):
 
 ```go
 type Settings struct {
@@ -318,15 +332,15 @@ type Settings struct {
 }
 
 func main() {
-    s, err := sconf.Load[Settings](sconf.New() /* ...провайдеры... */, os.Args[1:])
+    s, err := sconf.Load[Settings](sconf.New() /* ...providers... */, os.Args[1:])
     if errors.Is(err, sconf.ErrHelp) {
-        os.Exit(0) // usage уже напечатан внутри Load
+        os.Exit(0) // usage already printed by Load
     }
     // ...
 }
 ```
 
-`go run . --help` печатает:
+`go run . --help` prints:
 
 ```
 Options:
@@ -335,14 +349,14 @@ Options:
   --Mode  string  {dev|prod}  (default "dev")  run mode
 ```
 
-Ключи выводятся в форме командной строки (`--section:key`) — так же они
-принимаются из аргументов. Справку можно получить и вручную:
-`sconf.Usage[T]() string`, `sconf.HelpRequested(args) bool`, а структурированные
-данные — `sconf.Describe[T]() []sconf.UsageEntry`.
+Keys are shown in command-line form (`--section:key`) — exactly how they are
+accepted from arguments. You can also generate help manually:
+`sconf.Usage[T]() string`, `sconf.HelpRequested(args) bool`, and the structured
+data via `sconf.Describe[T]() []sconf.UsageEntry`.
 
-## Кастомный разбор: Unmarshaler
+## Custom parsing: `Unmarshaler`
 
-Тип может сам разобрать своё строковое представление (проверяется до reflection):
+A type can parse its own string form (checked before reflection):
 
 ```go
 type CSV []string
@@ -357,10 +371,10 @@ type Settings struct{ Origins CSV }
 s, _ := sconf.Load[Settings](sconf.New().AddEnvironmentVariables(""), nil)
 ```
 
-## Валидация: Validator
+## Validation: `Validator`
 
-Если тип реализует `Validate() error`, он вызывается после успешного бинда;
-ошибка оборачивается путём ключа:
+If a type implements `Validate() error`, it is called after a successful bind;
+the error is wrapped with the key path:
 
 ```go
 type DB struct {
@@ -380,28 +394,28 @@ _, err := sconf.Load[Settings](sconf.New() /* ... */, nil)
 // err: config: validate "Database": port is required
 ```
 
-## Обработка ошибок
+## Error handling
 
 ```go
 s, err := sconf.Load[Settings](builder, os.Args[1:])
 switch {
 case errors.Is(err, sconf.ErrHelp):
-    // запрошена справка (--help); usage уже напечатан
+    // help requested (--help); usage already printed
     os.Exit(0)
 case errors.Is(err, sconf.ErrBindType):
-    // значение нельзя привести к типу поля
-    // напр.: config: cannot bind "Servers:0:Port" (value "abc") to int
+    // a value could not be converted to the field type
+    // e.g.: config: cannot bind "Servers:0:Port" (value "abc") to int
 case errors.Is(err, sconf.ErrEnum):
-    // значение не входит в список enum
+    // a value is not in the enum list
 case err != nil:
     log.Fatal(err)
 }
 ```
 
-## Свой источник
+## Writing a custom source
 
-Любой тип с методом `Load` — это провайдер. Верните плоские пары с ключами
-через `:` (регистр не важен) и передайте в `Add`:
+Any type with a `Load` method is a provider. Return flat pairs whose keys use
+`:` (case doesn't matter) and pass it to `Add`:
 
 ```go
 type Provider interface {
@@ -412,7 +426,7 @@ type consulProvider struct{ /* ... */ }
 
 func (p consulProvider) Load() (map[string]string, error) {
     return map[string]string{
-        "database:host": "consul-db",
+        "database:host":  "consul-db",
         "servers:0:host": "web1",
     }, nil
 }
@@ -420,12 +434,24 @@ func (p consulProvider) Load() (map[string]string, error) {
 cfg, _ := sconf.New().Add(consulProvider{}).Build()
 ```
 
-## Команды
+## Full example
 
-```bash
+A complete, runnable service configuration — deeply nested structs, arrays of
+objects, maps, `default` / `enum` / `description`, a custom `Unmarshaler`, a
+`Validator`, and a merge of YAML + TOML (secret) + env + CLI — lives in
+[`example/`](./example):
+
+```sh
+go run ./example            # merge all layers and print the result
+go run ./example --help     # usage auto-generated from the Config struct
+go run ./example --http:port=1234 --logging:level=debug   # CLI override
+```
+
+## Development
+
+```sh
 go build ./...
 go test ./...
 go vet ./...
-go doc ./...   # godoc с примерами Example*
-```
+go doc ./...   # godoc, with runnable Example* functions
 ```

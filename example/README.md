@@ -1,45 +1,45 @@
-# Пример: конфигурация сервиса
+# Example: service configuration
 
-Полноценный пример использования `sconf` на реалистичной конфигурации
-микросервиса.
+A complete, runnable example of using `sconf` with a realistic microservice
+configuration.
 
-## Запуск
+## Run
 
 ```bash
-go run ./example                 # мерж всех слоёв + вывод результата
-go run ./example --help          # автогенерация usage из структуры Config
-go run ./example --http:port=1234 --logging:level=debug   # оверрайд из CLI
+go run ./example                 # merge all layers and print the result
+go run ./example --help          # usage auto-generated from the Config struct
+go run ./example --http:port=1234 --logging:level=debug   # CLI override
 ```
 
-## Что демонстрируется
+## What it demonstrates
 
-| Возможность | Где в примере |
-|-------------|---------------|
-| Глубокая вложенность структур | `Config` → `HTTP.Timeouts`, `Database.Pool` |
-| Массивы объектов | `Database.Replicas`, `Services` |
+| Feature | Where in the example |
+|---------|----------------------|
+| Deeply nested structs | `Config` → `HTTP.Timeouts`, `Database.Pool` |
+| Arrays of objects | `Database.Replicas`, `Services` |
 | `map[string]T` | `Features` |
-| Мерж слоёв (last-wins) | YAML → TOML(секрет) → env → CLI |
-| Перекрытие элемента массива из env | `APP_DATABASE__REPLICAS__0__HOST` |
-| Секрет от sidecar | `secrets.toml` + `Optional()` + `Wait()` |
-| Тег `default` | таймауты, пул, порт, ретраи |
-| Тег `enum` + валидация | `App.Env`, `Logging.Level/Format`, `Database.Driver` |
-| Тег `description` | текст в `--help` |
-| Кастомный `Unmarshaler` | `CORS.Origins` (тип `CSV`) |
-| `Validator` | `DatabaseConfig.Validate` (требует name/password) |
-| Единая точка входа | `sconf.Load[Config](builder, os.Args[1:])` |
-| `--help` (внутри `Load`) | возвращает `sconf.ErrHelp`, usage печатается автоматически |
+| Layer merge (last wins) | YAML → TOML (secret) → env → CLI |
+| Overriding one array element from env | `APP_DATABASE__REPLICAS__0__HOST` |
+| Secret from a sidecar | `secrets.toml` + `Optional()` + `Wait()` |
+| The `default` tag | timeouts, pool, port, retries |
+| The `enum` tag + validation | `App.Env`, `Logging.Level/Format`, `Database.Driver` |
+| The `description` tag | text shown in `--help` |
+| Custom `Unmarshaler` | `CORS.Origins` (the `CSV` type) |
+| `Validator` | `DatabaseConfig.Validate` (requires name/password) |
+| Single entry point | `sconf.Load[Config](builder, os.Args[1:])` |
+| `--help` (inside `Load`) | returns `sconf.ErrHelp`; usage is printed automatically |
 
-## Слои конфигурации (по возрастанию приоритета)
+## Configuration layers (lowest to highest priority)
 
-1. `appsettings.yaml` — база.
-2. `appsettings.local.yaml` — локальные оверрайды разработчика (опционально).
-3. `secrets.toml` — секреты от sidecar (опционально, с ожиданием появления).
-4. Переменные среды `APP_*` — перекрывают файлы (выставляются в `main` для наглядности).
-5. Аргументы командной строки — перекрывают всё.
+1. `appsettings.yaml` — the base.
+2. `appsettings.local.yaml` — developer's local overrides (optional).
+3. `secrets.toml` — secrets from a sidecar (optional, waits for the file).
+4. `APP_*` environment variables — override files (set in `main` for clarity).
+5. Command-line arguments — override everything.
 
-## Проверить ошибки
+## Trying the error paths
 
 ```bash
-go run ./example --logging:level=trace   # невалидный enum
-# config bind error: config: "Logging:Level" = "trace": config: value not allowed (allowed: debug, info, warn, error)
+go run ./example --logging:level=trace   # invalid enum
+# config error: config: "Logging:Level" = "trace": config: value not allowed (allowed: debug, info, warn, error)
 ```
