@@ -35,6 +35,10 @@ cfg, err := sconf.Load[Config](
 - **Per-key override** of a single array element from an env var — something
   viper can't do.
 - **Wait for files** to appear on disk (Vault sidecar) and **optional** files.
+- **Secrets from Vault** — declare a field as `secret.UserPass` / `secret.Cert` /
+  `secret.KV`, put only the *path* in your config, and `Load` fetches the value
+  from Vault, with optional **background refresh** (AD/DB every 30 min, PKI by
+  TTL). Optional package — the core stays dependency-free.
 - Reflection binding; key names come from `json` / `yaml` / `toml` / `name` tags.
 - `default` (fallback value) and `enum` (allowed values + validation) tags.
 - **Usage auto-generation** from your struct, with built-in `--help` handling.
@@ -56,6 +60,8 @@ Requires Go 1.24+.
 | `sconf` | `Builder`, `Config`, `Load[T]`, `Usage[T]`, errors, option re-exports |
 | `sconf/provider` | `JSONFile`, `YAMLFile`, `TOMLFile`, `Env`, `Args`, `Map` |
 | `sconf/bind` | reflection binder (`Unmarshaler`, `Validator`) |
+| `sconf/secret` | secret field types (`UserPass`, `Cert`) — no external deps |
+| `sconf/vault` | Vault-backed secret resolver (imports `vault-client-go`) |
 | `sconf/internal/flat` | the flat model and path utilities |
 
 ## Table of contents
@@ -72,6 +78,7 @@ Requires Go 1.24+.
 - [Usage generation and `--help`](#usage-generation-and---help)
 - [Custom parsing: `Unmarshaler`](#custom-parsing-unmarshaler)
 - [Validation: `Validator`](#validation-validator)
+- [Secrets from Vault](#secrets-from-vault)
 - [Error handling](#error-handling)
 - [Writing a custom source](#writing-a-custom-source)
 - [Full example](#full-example)
@@ -393,6 +400,305 @@ type Settings struct{ Database DB }
 _, err := sconf.Load[Settings](sconf.New() /* ... */, nil)
 // err: config: validate "Database": port is required
 ```
+
+## Secrets from Vault
+
+Keep secret **values** out of your config files. Put a **path**, get a value —
+`sconf` fetches it from [HashiCorp Vault](https://www.vaultproject.io/) at load
+time and, if you want, keeps it fresh in the background.
+
+Declare fields with types from `sconf/secret`, and write the full Vault path in
+YAML/JSON/TOML:
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "os"
+
+    "github.com/dvislobokov/sconf"
+    "github.com/dvislobokov/sconf/secret"
+    "github.com/dvislobokov/sconf/vault"
+)
+
+type Config struct {
+    App struct {
+        Name string `yaml:"name"`
+        Env  string `yaml:"env" enum:"dev,staging,prod" default:"dev"`
+    } `yaml:"app"`
+
+    Database struct {
+        Host  string          `yaml:"host" default:"localhost"`
+        Port  int             `yaml:"port" default:"5432"`
+        Creds secret.UserPass `yaml:"creds"` // ← username/password from Vault
+    } `yaml:"database"`
+
+    ActiveDirectory secret.UserPass `yaml:"ad_creds"` // ← rotated by Vault
+    TLS             secret.Cert     `yaml:"tls_cert"` // ← issued by pki
+    APIKey          secret.Value    `yaml:"api_key"`  // ← one KV field
+    FeatureFlags    secret.KV       `yaml:"flags"`    // ← a whole KV secret
+}
+
+func main() {
+    ctx := context.Background()
+
+    cfg, watcher, err := vault.Load[Config](ctx,
+        sconf.New().
+            AddYAMLFile("appsettings.yaml").
+            AddEnvironmentVariables("APP_"),
+        os.Args[1:],
+        vault.WithErrorHandler(func(err error) { log.Println("vault refresh:", err) }),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer watcher.Stop() // stop background refresh on shutdown
+
+    db := cfg.Database.Creds
+    log.Printf("db: %s:%d user=%s", cfg.Database.Host, cfg.Database.Port, db.Username())
+    log.Printf("tls serial: %s", cfg.TLS.SerialNumber())
+    log.Printf("region flag: %s", cfg.FeatureFlags.Get("region"))
+}
+```
+
+```yaml
+# appsettings.yaml — full Vault paths only, never secret values
+app:
+  name: billing-api
+  env: prod
+
+database:
+  host: db.internal
+  port: 5432
+  creds: database/static-creds/billing-app     # GET → username, password
+
+ad_creds: ad/static-cred/svc-billing            # GET → username, current_password
+tls_cert: pki/issue/web?common_name=billing.example.com&ttl=72h   # PUT (issue)
+api_key:  secret/data/billing?field=stripe_key  # one KV v2 field
+flags:    secret/data/billing/flags             # all KV v2 fields
+```
+
+That's the whole integration: values arrive filled, and `secret.UserPass` /
+`secret.Cert` are refreshed on a schedule (see [Keeping secrets
+fresh](#keeping-secrets-fresh)).
+
+> Values are read through **methods** (`Username()`, `Password()`,
+> `Certificate()`, …), not fields, because the background refresher may replace
+> them concurrently. The methods return an atomic snapshot and are safe to call
+> from any goroutine.
+
+### Secret types
+
+All live in `sconf/secret` and each exposes `Path()` and `Resolved()`.
+
+| Type | Vault op | Accessors | Typical engines |
+|------|----------|-----------|-----------------|
+| `secret.UserPass` | read (`GET`) | `Username()`, `Password()` | `database` (creds & static-creds), `openldap`, `ad`, `userpass` |
+| `secret.Cert` | write (`PUT`) | `Certificate()`, `PrivateKey()`, `IssuingCA()`, `CAChain()`, `SerialNumber()` | `pki` (`issue/<role>`) |
+| `secret.KV` | read (`GET`) | `Get(key)`, `Values()` | `kv` v1/v2 |
+| `secret.Value` | read (`GET`) | `Get()` | `kv` v1/v2 (single field) |
+
+The config value is always the **full Vault path** — mount, `creds` /
+`static-creds` / `issue`, role, everything. Nothing is inferred except the
+optional `VAULT_MOUNTPATH` prefix. Extra `?key=value` params are passed to Vault
+as the request body (for `pki` issue: `common_name`, `alt_names`, `ttl`, …);
+`refresh`, `field`, `username_field`, and `password_field` are reserved for the
+resolver and never sent.
+
+### `UserPass` field mapping
+
+`Username()` reads the response field `username`. `Password()` reads
+`current_password` when present (that's what the `ad` engine returns), otherwise
+`password` (`database`, `openldap`). Because `database`/`openldap` never return a
+`current_password` field, this order resolves both cases automatically — even
+when an `ad` response also carries a `password` field. Override the field names
+for non-standard engines:
+
+```yaml
+ad_creds: ad/static-cred/svc              # auto: picks current_password
+custom:   secret/path?username_field=login&password_field=secret
+```
+
+### KV: three ways to consume it
+
+A KV secret holds arbitrary data, so pick the shape you need (for KV v2 the path
+includes the `data` segment; the `data`/`metadata` envelope is unwrapped for
+you):
+
+```go
+type Config struct {
+    Everything secret.KV    `yaml:"kv"`      // whole secret
+    OneField   secret.Value `yaml:"one"`     // a single field
+}
+```
+
+```yaml
+kv:  secret/data/myapp               # cfg.Everything.Values() / .Get("host")
+one: secret/data/myapp?field=token   # cfg.OneField.Get()
+```
+
+`secret.Value` without `?field=` also works when the secret has exactly one
+field; otherwise it errors and lists the available fields.
+
+### KV as a config layer
+
+To merge a KV secret's keys straight into the config tree — so they bind to
+ordinary fields like any other source — add a `vault.KV` **provider**. Nested
+objects and lists flatten just like every other provider (`key:subkey`,
+`list:index`):
+
+```go
+sconf.New().
+    AddYAMLFile("appsettings.yaml").
+    Add(vault.KV("secret/data/myapp")).                    // into the root
+    Add(vault.KV("secret/data/db", vault.At("database")))  // into a section
+```
+
+It's a normal layer: merged in order (later wins) and read from Vault at `Build`
+time using the same environment configuration below.
+
+### Keeping secrets fresh
+
+Dynamic and static credentials expire; certificates have a TTL. `vault.Load`
+returns a `*vault.Watcher` that refreshes each secret in the background and
+atomically swaps in the new value:
+
+| Secret | Default refresh |
+|--------|-----------------|
+| `secret.UserPass`, `secret.KV`, `secret.Value` | every **30 min** — or sooner if the lease/TTL is shorter, so credentials never expire before renewal |
+| `secret.Cert` | by **TTL** — re-issued at ~70% of the certificate's lifetime |
+
+Override per secret with a `?refresh=` param:
+
+```yaml
+db_creds: database/creds/app?refresh=10m   # force a 10-minute cadence
+```
+
+Lifecycle:
+
+```go
+cfg, watcher, err := vault.Load[Config](ctx, builder, args,
+    vault.WithErrorHandler(func(err error) { log.Println("refresh:", err) }),
+    vault.WithRetryBackoff(15*time.Second),
+)
+...
+defer watcher.Stop()          // stops goroutines, waits for them to finish
+// or just cancel ctx — the watcher stops with it
+```
+
+On a refresh error the previous value is kept and the secret is retried after
+the backoff; `WithErrorHandler` lets you observe those errors (by default they're
+silent). `watcher.Count()` reports how many secrets are being refreshed.
+
+**Don't need refresh?** Use the plain one-shot `sconf.Load` and a blank import —
+the resolver still fills every secret once, it just doesn't start a watcher:
+
+```go
+import _ "github.com/dvislobokov/sconf/vault" // registers the resolver
+
+cfg, err := sconf.Load[Config](builder, args) // secrets filled, no background refresh
+```
+
+### Configuration (environment)
+
+Connection settings come from the environment — the same for `vault.Load`,
+`sconf.Load` + blank import, and the `vault.KV` provider. Works in Kubernetes and
+anywhere else.
+
+| Variable | Meaning |
+|----------|---------|
+| `VAULT_SECRETS_FILE` | local dev: read secrets from this file instead of Vault (see [Local development](#local-development)) |
+| `VAULT_ADDR` / `VAULT_URL` | server address (**required** when secret fields exist, unless `VAULT_SECRETS_FILE` is set) |
+| `VAULT_NAMESPACE` | namespace (Vault Enterprise / HCP) |
+| `VAULT_MOUNTPATH` | optional prefix prepended to every secret path |
+| `VAULT_TIMEOUT` | per-request timeout (default `30s`) |
+| `VAULT_SKIP_VERIFY` | skip TLS verification (`1`/`true`) |
+| `VAULT_AUTH` | `token` (default), `kubernetes`, or `approle` |
+| `VAULT_TOKEN` | token — for `VAULT_AUTH=token` |
+| `VAULT_K8S_ROLE` | Kubernetes role (**required** for `VAULT_AUTH=kubernetes`) |
+| `VAULT_K8S_MOUNT` | Kubernetes auth mount (default `kubernetes`) |
+| `VAULT_K8S_TOKEN_PATH` | service-account JWT path (default `/var/run/secrets/kubernetes.io/serviceaccount/token`) |
+| `VAULT_ROLE_ID`, `VAULT_SECRET_ID` | AppRole credentials (**required** for `VAULT_AUTH=approle`) |
+| `VAULT_APPROLE_MOUNT` | AppRole auth mount (default `approle`) |
+
+Two `.env` examples:
+
+```sh
+# Local dev — token auth
+VAULT_ADDR=https://vault.dev.internal:8200
+VAULT_TOKEN=hvs.CAESIJ...
+
+# Inside Kubernetes — service-account auth, no static token
+VAULT_ADDR=https://vault.internal:8200
+VAULT_NAMESPACE=team-billing
+VAULT_AUTH=kubernetes
+VAULT_K8S_ROLE=billing-api
+```
+
+### Local development
+
+You don't need a running Vault to develop locally. Two options:
+
+**1. A local secrets file (no Vault at all).** Set `VAULT_SECRETS_FILE` to a file
+mapping each secret path to its fields — the resolver reads from it and never
+contacts Vault (no `VAULT_ADDR`, no auth). Your application code and config are
+identical to production; only the environment differs.
+
+```sh
+VAULT_SECRETS_FILE=./secrets.dev.yaml   # that's the only variable you need
+```
+
+```yaml
+# secrets.dev.yaml — gitignored. Keys are the SAME full paths as in your config.
+database/static-creds/billing-app:
+  username: devuser
+  password: devpass
+
+pki/issue/web:
+  certificate: "-----BEGIN CERTIFICATE-----\ndev\n-----END CERTIFICATE-----"
+  private_key: "-----BEGIN PRIVATE KEY-----\ndev\n-----END PRIVATE KEY-----"
+  serial_number: dev-01
+
+secret/data/billing:          # KV: put the fields directly
+  stripe_key: sk_test_local
+  region: eu-central-1
+```
+
+The file is re-read on each refresh, so editing it updates values live. It takes
+precedence over `VAULT_ADDR` if both are set — handy for overriding a single
+environment. `vault.KV` providers read from it too. (JSON works as well as YAML.)
+
+**2. A dev-mode Vault.** Run `vault server -dev`, point at it, and seed the
+secrets — no code changes, exercises the real client and auth:
+
+```sh
+vault server -dev -dev-root-token-id=dev-root &
+export VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=dev-root
+vault kv put secret/billing stripe_key=sk_test_local region=eu-central-1
+```
+
+### Failure behavior
+
+- Config **has** secret fields but neither Vault nor a local file is configured
+  (no `VAULT_ADDR`/`VAULT_SECRETS_FILE`, or the chosen auth method is missing its
+  variables) → `Load` fails with an error wrapping `vault.ErrNotConfigured`.
+  Secrets are never silently left empty.
+- Config has **no** secret fields → Vault is never contacted; none of the
+  variables are required.
+
+### How the pieces fit
+
+The core `sconf` package has **no** Vault dependency — it only exposes a hook
+(`RegisterSecretResolver`). The `sconf/vault` package registers a Vault-backed
+resolver from its `init()`, and pulls in `vault-client-go`. So importing
+`sconf/vault` (as a normal or blank import) is what activates everything; if you
+never import it, the core stays dependency-free. Adding your own secret type is
+just implementing `secret.Resolvable` — no changes to `sconf/vault` needed.
+
+A self-contained runnable demo (with an in-process fake Vault) lives in
+[`example/vault`](example/vault): `go run ./example/vault`.
 
 ## Error handling
 

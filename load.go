@@ -1,6 +1,7 @@
 package sconf
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -35,7 +36,17 @@ var ErrHelp = errors.New("config: help requested")
 //	case err != nil:
 //	    log.Fatal(err)
 //	}
+//
+// Если в T есть поля-секреты (см. пакет sconf/secret) и подключён резолвер
+// (blank-import sconf/vault), после бинда они заполняются из Vault; при их
+// наличии, но не настроенном окружении Vault, Load возвращает ошибку.
 func Load[T any](b *Builder, args []string) (*T, error) {
+	return LoadContext[T](context.Background(), b, args)
+}
+
+// LoadContext идентична Load, но принимает context.Context, который
+// пробрасывается в резолвер секретов (таймаут/отмена похода в Vault).
+func LoadContext[T any](ctx context.Context, b *Builder, args []string) (*T, error) {
 	if HelpRequested(args) {
 		fmt.Fprint(os.Stdout, Usage[T]())
 		return nil, ErrHelp
@@ -51,6 +62,9 @@ func Load[T any](b *Builder, args []string) (*T, error) {
 
 	out := new(T)
 	if err := bind.Bind(cfg.m, "", out); err != nil {
+		return nil, err
+	}
+	if err := resolveSecrets(ctx, out); err != nil {
 		return nil, err
 	}
 	return out, nil

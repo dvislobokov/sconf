@@ -1,0 +1,18 @@
+# Конфигурация с полями-секретами. В YAML указываются только ПУТИ до секретов
+# в Vault — реальные значения приклад забирает из Vault при загрузке.
+app:
+  name: billing-api
+
+# database/creds/<role> — динамические креды БД (движок database).
+# Резолвер прочитает путь и заполнит DbCreds.Username / .Password.
+db_cred: database/creds/app-role
+
+# pki/issue/<role> + параметры выпуска в стиле query-строки.
+# Резолвер выполнит issue и заполнит WebCert.Certificate / .PrivateKey / ...
+web_cert: pki/issue/web?common_name=billing.example.com&ttl=24h
+
+# KV v2 (путь включает "data"): весь секрет как map (Extra.Values / .Get).
+extra: secret/data/billing
+
+# Одно поле KV-секрета.
+api_key: secret/data/billing?field=api_key
