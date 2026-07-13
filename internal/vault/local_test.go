@@ -43,7 +43,7 @@ secret/data/billing:
 	_ = cfg.Cert.UnmarshalConfig("pki/issue/web?common_name=x")
 	_ = cfg.Key.UnmarshalConfig("secret/data/billing?field=stripe_key")
 
-	if err := (resolver{}).Resolve(context.Background(), &cfg); err != nil {
+	if err := Resolve(context.Background(), &cfg); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	if cfg.DB.Username() != "devuser" || cfg.DB.Password() != "devpass" {
@@ -63,7 +63,7 @@ func TestLocalFileMissingPath(t *testing.T) {
 
 	cfg := struct{ DB secret.UserPass }{}
 	_ = cfg.DB.UnmarshalConfig("missing/path")
-	if err := (resolver{}).Resolve(context.Background(), &cfg); err == nil {
+	if err := Resolve(context.Background(), &cfg); err == nil {
 		t.Fatal("expected error for path missing from local secrets file")
 	}
 }
@@ -97,7 +97,7 @@ func TestLocalFileTakesPrecedenceOverVault(t *testing.T) {
 	})
 	cfg := struct{ DB secret.UserPass }{}
 	_ = cfg.DB.UnmarshalConfig("db/creds/app")
-	if err := (resolver{}).Resolve(context.Background(), &cfg); err != nil {
+	if err := Resolve(context.Background(), &cfg); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	if cfg.DB.Username() != "local" {

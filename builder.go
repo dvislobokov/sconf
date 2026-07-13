@@ -2,6 +2,7 @@ package sconf
 
 import (
 	"github.com/dvislobokov/sconf/internal/flat"
+	"github.com/dvislobokov/sconf/internal/vault"
 	"github.com/dvislobokov/sconf/provider"
 )
 
@@ -49,6 +50,23 @@ func (b *Builder) AddEnvironmentVariables(prefix string) *Builder {
 // AddCommandLine добавляет аргументы командной строки (обычно os.Args[1:]).
 func (b *Builder) AddCommandLine(args []string) *Builder {
 	return b.Add(provider.Args(args))
+}
+
+// AddVaultKV добавляет KV-секрет Vault как источник конфигурации: его поля
+// раскладываются в корень дерева наравне со значениями из файлов и переменных
+// среды. path — полный путь секрета (для KV v2 — с сегментом data, например
+// "secret/data/myapp"). Подключение к Vault берётся из тех же переменных
+// среды, что и у полей-секретов (VAULT_ADDR, VAULT_AUTH, ...); в режиме
+// локальной разработки (VAULT_SECRETS_FILE) секрет читается из файла.
+func (b *Builder) AddVaultKV(path string) *Builder {
+	return b.Add(vault.KV(path))
+}
+
+// AddVaultKVAt — как AddVaultKV, но помещает поля секрета под указанный
+// префикс (секцию) конфигурации, например AddVaultKVAt("secret/data/db",
+// "database").
+func (b *Builder) AddVaultKVAt(path, section string) *Builder {
+	return b.Add(vault.KV(path, vault.At(section)))
 }
 
 // AddInMemory добавляет заранее заданные значения.

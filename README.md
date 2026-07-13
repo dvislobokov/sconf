@@ -57,11 +57,11 @@ Requires Go 1.24+.
 
 | Package | Contents |
 |---------|----------|
-| `sconf` | `Builder`, `Config`, `Load[T]`, `Usage[T]`, errors, option re-exports |
+| `sconf` | `Builder`, `Config`, `Load[T]`, `Usage[T]`, errors, option re-exports, built-in Vault integration |
 | `sconf/provider` | `JSONFile`, `YAMLFile`, `TOMLFile`, `Env`, `Args`, `Map` |
 | `sconf/bind` | reflection binder (`Unmarshaler`, `Validator`) |
 | `sconf/secret` | secret field types (`UserPass`, `Cert`) — no external deps |
-| `sconf/vault` | Vault-backed secret resolver (imports `vault-client-go`) |
+| `sconf/internal/vault` | Vault client internals (`vault-client-go`) — used by the core, not imported directly |
 | `sconf/internal/flat` | the flat model and path utilities |
 
 ## Table of contents
@@ -414,13 +414,11 @@ YAML/JSON/TOML:
 package main
 
 import (
-    "context"
     "log"
     "os"
 
     "github.com/dvislobokov/sconf"
     "github.com/dvislobokov/sconf/secret"
-    "github.com/dvislobokov/sconf/vault"
 )
 
 type Config struct {
@@ -442,19 +440,18 @@ type Config struct {
 }
 
 func main() {
-    ctx := context.Background()
-
-    cfg, watcher, err := vault.Load[Config](ctx,
+    cfg, err := sconf.Load[Config](
         sconf.New().
             AddYAMLFile("appsettings.yaml").
             AddEnvironmentVariables("APP_"),
         os.Args[1:],
-        vault.WithErrorHandler(func(err error) { log.Println("vault refresh:", err) }),
+        sconf.WithSecretErrorHandler(func(err error) { log.Println("vault refresh:", err) }),
     )
     if err != nil {
         log.Fatal(err)
     }
-    defer watcher.Stop() // stop background refresh on shutdown
+    // Secrets are filled and refreshed in the background automatically —
+    // nothing to stop or manage.
 
     db := cfg.Database.Creds
     log.Printf("db: %s:%d user=%s", cfg.Database.Host, cfg.Database.Port, db.Username())
@@ -545,15 +542,15 @@ field; otherwise it errors and lists the available fields.
 ### KV as a config layer
 
 To merge a KV secret's keys straight into the config tree — so they bind to
-ordinary fields like any other source — add a `vault.KV` **provider**. Nested
+ordinary fields like any other source — add a Vault KV **layer**. Nested
 objects and lists flatten just like every other provider (`key:subkey`,
 `list:index`):
 
 ```go
 sconf.New().
     AddYAMLFile("appsettings.yaml").
-    Add(vault.KV("secret/data/myapp")).                    // into the root
-    Add(vault.KV("secret/data/db", vault.At("database")))  // into a section
+    AddVaultKV("secret/data/myapp").                // into the root
+    AddVaultKVAt("secret/data/db", "database")      // into a section
 ```
 
 It's a normal layer: merged in order (later wins) and read from Vault at `Build`
@@ -561,9 +558,9 @@ time using the same environment configuration below.
 
 ### Keeping secrets fresh
 
-Dynamic and static credentials expire; certificates have a TTL. `vault.Load`
-returns a `*vault.Watcher` that refreshes each secret in the background and
-atomically swaps in the new value:
+Dynamic and static credentials expire; certificates have a TTL. `sconf.Load`
+starts a background refresher for every secret with a refresh interval and
+atomically swaps in new values:
 
 | Secret | Default refresh |
 |--------|-----------------|
@@ -576,36 +573,26 @@ Override per secret with a `?refresh=` param:
 db_creds: database/creds/app?refresh=10m   # force a 10-minute cadence
 ```
 
-Lifecycle:
+Lifecycle: the refresher runs entirely inside `sconf` — nothing is returned to
+manage. With `Load` it lives for the lifetime of the process; with `LoadContext`
+it stops when the context is cancelled:
 
 ```go
-cfg, watcher, err := vault.Load[Config](ctx, builder, args,
-    vault.WithErrorHandler(func(err error) { log.Println("refresh:", err) }),
-    vault.WithRetryBackoff(15*time.Second),
+cfg, err := sconf.LoadContext[Config](ctx, builder, args,
+    sconf.WithSecretErrorHandler(func(err error) { log.Println("refresh:", err) }),
+    sconf.WithSecretRetryBackoff(15*time.Second),
 )
-...
-defer watcher.Stop()          // stops goroutines, waits for them to finish
-// or just cancel ctx — the watcher stops with it
+// cancel ctx on shutdown — the background refresh stops with it
 ```
 
 On a refresh error the previous value is kept and the secret is retried after
-the backoff; `WithErrorHandler` lets you observe those errors (by default they're
-silent). `watcher.Count()` reports how many secrets are being refreshed.
-
-**Don't need refresh?** Use the plain one-shot `sconf.Load` and a blank import —
-the resolver still fills every secret once, it just doesn't start a watcher:
-
-```go
-import _ "github.com/dvislobokov/sconf/vault" // registers the resolver
-
-cfg, err := sconf.Load[Config](builder, args) // secrets filled, no background refresh
-```
+the backoff; `WithSecretErrorHandler` lets you observe those errors (by default
+they're silent).
 
 ### Configuration (environment)
 
-Connection settings come from the environment — the same for `vault.Load`,
-`sconf.Load` + blank import, and the `vault.KV` provider. Works in Kubernetes and
-anywhere else.
+Connection settings come from the environment — the same for secret fields and
+the `AddVaultKV` layers. Works in Kubernetes and anywhere else.
 
 | Variable | Meaning |
 |----------|---------|
@@ -668,7 +655,7 @@ secret/data/billing:          # KV: put the fields directly
 
 The file is re-read on each refresh, so editing it updates values live. It takes
 precedence over `VAULT_ADDR` if both are set — handy for overriding a single
-environment. `vault.KV` providers read from it too. (JSON works as well as YAML.)
+environment. `AddVaultKV` layers read from it too. (JSON works as well as YAML.)
 
 **2. A dev-mode Vault.** Run `vault server -dev`, point at it, and seed the
 secrets — no code changes, exercises the real client and auth:
@@ -683,19 +670,18 @@ vault kv put secret/billing stripe_key=sk_test_local region=eu-central-1
 
 - Config **has** secret fields but neither Vault nor a local file is configured
   (no `VAULT_ADDR`/`VAULT_SECRETS_FILE`, or the chosen auth method is missing its
-  variables) → `Load` fails with an error wrapping `vault.ErrNotConfigured`.
+  variables) → `Load` fails with an error wrapping `sconf.ErrVaultNotConfigured`.
   Secrets are never silently left empty.
 - Config has **no** secret fields → Vault is never contacted; none of the
   variables are required.
 
 ### How the pieces fit
 
-The core `sconf` package has **no** Vault dependency — it only exposes a hook
-(`RegisterSecretResolver`). The `sconf/vault` package registers a Vault-backed
-resolver from its `init()`, and pulls in `vault-client-go`. So importing
-`sconf/vault` (as a normal or blank import) is what activates everything; if you
-never import it, the core stays dependency-free. Adding your own secret type is
-just implementing `secret.Resolvable` — no changes to `sconf/vault` needed.
+Vault support is built into the core: `sconf.Load` binds the config, fills every
+secret field via `sconf/internal/vault`, and starts the background refresh —
+no extra imports, no registration, nothing to wire up. If your config has no
+secret fields, Vault is never contacted. Adding your own secret type is just
+implementing `secret.Resolvable` — the resolver picks it up automatically.
 
 A self-contained runnable demo (with an in-process fake Vault) lives in
 [`example/vault`](example/vault): `go run ./example/vault`.

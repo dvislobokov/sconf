@@ -1,23 +1,7 @@
-// Package vault реализует резолвер секретов sconf на базе HashiCorp Vault
-// (github.com/hashicorp/vault-client-go). Он подключается blank-импортом и
-// регистрируется в ядре sconf через init():
-//
-//	import (
-//	    "github.com/dvislobokov/sconf"
-//	    "github.com/dvislobokov/sconf/secret"
-//	    _ "github.com/dvislobokov/sconf/vault" // подключает резолвер
-//	)
-//
-//	type Config struct {
-//	    DbCreds secret.UserPass `yaml:"db_cred"`
-//	    WebCert secret.Cert     `yaml:"web_cert"`
-//	}
-//
-//	cfg, err := sconf.Load[Config](
-//	    sconf.New().AddYAMLFile("appsettings.yaml"),
-//	    os.Args[1:],
-//	)
-//	// cfg.DbCreds.Username / .Password уже заполнены из Vault.
+// Package vault — внутренняя реализация работы sconf с HashiCorp Vault
+// (github.com/hashicorp/vault-client-go). Ядро sconf вызывает Resolve после
+// бинда конфигурации и Watch для фонового обновления секретов; со стороны
+// приклада не требуется ни отдельного импорта, ни регистрации.
 //
 // После бинда sconf.Load обходит структуру, находит поля-секреты (типы,
 // реализующие secret.Resolvable) и заполняет их из Vault. Если полей-секретов
@@ -33,21 +17,14 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/dvislobokov/sconf"
 	"github.com/dvislobokov/sconf/secret"
 	vault "github.com/hashicorp/vault-client-go"
 )
 
-func init() {
-	sconf.RegisterSecretResolver(resolver{})
-}
-
-// resolver реализует sconf.SecretResolver поверх Vault.
-type resolver struct{}
-
-// Resolve обходит target, находит поля-секреты и заполняет их из Vault.
-// Если секретов нет — возвращает nil, ничего не требуя от окружения.
-func (resolver) Resolve(ctx context.Context, target any) error {
+// Resolve обходит target (указатель на конфигурацию), находит поля-секреты и
+// заполняет их из Vault. Если секретов нет — возвращает nil, ничего не требуя
+// от окружения.
+func Resolve(ctx context.Context, target any) error {
 	rv := reflect.ValueOf(target)
 	if rv.Kind() != reflect.Ptr || rv.IsNil() {
 		return nil

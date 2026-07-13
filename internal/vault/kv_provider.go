@@ -34,14 +34,7 @@ func At(prefix string) KVOption {
 // пути (для KV v2 — с сегментом data, например "secret/data/myapp") и
 // добавляющий его поля в конфигурацию. Подключение к Vault берётся из тех же
 // переменных среды, что и резолвер (VAULT_ADDR, VAULT_AUTH, ...).
-//
-//	cfg, err := sconf.Load[Config](
-//	    sconf.New().
-//	        AddYAMLFile("appsettings.yaml").
-//	        Add(vault.KV("secret/data/myapp")).      // в корень
-//	        Add(vault.KV("secret/data/db", vault.At("database"))), // в секцию
-//	    os.Args[1:],
-//	)
+// Наружу выставляется методами Builder.AddVaultKV / Builder.AddVaultKVAt.
 func KV(path string, opts ...KVOption) *kvProvider {
 	p := &kvProvider{path: path}
 	for _, o := range opts {

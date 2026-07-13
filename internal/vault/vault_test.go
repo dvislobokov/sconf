@@ -92,7 +92,7 @@ func TestResolveTokenAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := (resolver{}).Resolve(context.Background(), &cfg); err != nil {
+	if err := Resolve(context.Background(), &cfg); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 
@@ -127,7 +127,7 @@ func TestResolveMountPathPrefix(t *testing.T) {
 	// database/creds/app -> team-a/database/creds/app.
 	cfg := struct{ DB secret.UserPass }{}
 	_ = cfg.DB.UnmarshalConfig("database/creds/app")
-	if err := (resolver{}).Resolve(context.Background(), &cfg); err != nil {
+	if err := Resolve(context.Background(), &cfg); err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	if cfg.DB.Username() != "u" {
@@ -142,7 +142,7 @@ func TestResolveNoSecretsNoEnv(t *testing.T) {
 		Host string
 		Port int
 	}
-	if err := (resolver{}).Resolve(context.Background(), &plain{Host: "x"}); err != nil {
+	if err := Resolve(context.Background(), &plain{Host: "x"}); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
 }
@@ -151,7 +151,7 @@ func TestResolveSecretsButNotConfigured(t *testing.T) {
 	withEnv(t, map[string]string{}) // нет VAULT_ADDR
 	cfg := struct{ DB secret.UserPass }{}
 	_ = cfg.DB.UnmarshalConfig("database/creds/app")
-	err := (resolver{}).Resolve(context.Background(), &cfg)
+	err := Resolve(context.Background(), &cfg)
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("expected ErrNotConfigured, got %v", err)
 	}
@@ -161,7 +161,7 @@ func TestResolveTokenAuthMissingToken(t *testing.T) {
 	withEnv(t, map[string]string{"VAULT_ADDR": "http://127.0.0.1:8200"})
 	cfg := struct{ DB secret.UserPass }{}
 	_ = cfg.DB.UnmarshalConfig("database/creds/app")
-	err := (resolver{}).Resolve(context.Background(), &cfg)
+	err := Resolve(context.Background(), &cfg)
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("expected ErrNotConfigured, got %v", err)
 	}
@@ -179,7 +179,7 @@ func TestResolveSecretInSlice(t *testing.T) {
 	_ = cfg.Creds[0].UnmarshalConfig("db/creds/a")
 	_ = cfg.Creds[1].UnmarshalConfig("db/creds/b")
 
-	if err := (resolver{}).Resolve(context.Background(), &cfg); err != nil {
+	if err := Resolve(context.Background(), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	if cfg.Creds[0].Username() != "a" || cfg.Creds[1].Username() != "b" {

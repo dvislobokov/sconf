@@ -37,16 +37,27 @@ var ErrHelp = errors.New("config: help requested")
 //	    log.Fatal(err)
 //	}
 //
-// Если в T есть поля-секреты (см. пакет sconf/secret) и подключён резолвер
-// (blank-import sconf/vault), после бинда они заполняются из Vault; при их
-// наличии, но не настроенном окружении Vault, Load возвращает ошибку.
-func Load[T any](b *Builder, args []string) (*T, error) {
-	return LoadContext[T](context.Background(), b, args)
+// Если в T есть поля-секреты (см. пакет sconf/secret), после бинда они
+// заполняются из Vault, а их фоновое обновление запускается автоматически
+// (см. LoadContext). При наличии полей-секретов, но не настроенном окружении
+// Vault, Load возвращает ошибку, оборачивающую ErrVaultNotConfigured.
+func Load[T any](b *Builder, args []string, opts ...LoadOption) (*T, error) {
+	return LoadContext[T](context.Background(), b, args, opts...)
 }
 
-// LoadContext идентична Load, но принимает context.Context, который
-// пробрасывается в резолвер секретов (таймаут/отмена похода в Vault).
-func LoadContext[T any](ctx context.Context, b *Builder, args []string) (*T, error) {
+// LoadContext идентична Load, но принимает context.Context. Он ограничивает и
+// сам поход в Vault при загрузке, и время жизни фонового обновления секретов:
+// горутины обновления останавливаются при отмене ctx. У Load контекст фоновый,
+// поэтому секреты обновляются до конца жизни процесса — останавливать нечего
+// и не нужно. Ошибки фонового обновления по умолчанию игнорируются (секрет
+// сохраняет прежнее значение до следующей попытки) — задайте обработчик через
+// WithSecretErrorHandler.
+func LoadContext[T any](ctx context.Context, b *Builder, args []string, opts ...LoadOption) (*T, error) {
+	var o loadOptions
+	for _, op := range opts {
+		op(&o)
+	}
+
 	if HelpRequested(args) {
 		fmt.Fprint(os.Stdout, Usage[T]())
 		return nil, ErrHelp
@@ -65,6 +76,9 @@ func LoadContext[T any](ctx context.Context, b *Builder, args []string) (*T, err
 		return nil, err
 	}
 	if err := resolveSecrets(ctx, out); err != nil {
+		return nil, err
+	}
+	if err := watchSecrets(ctx, out, o); err != nil {
 		return nil, err
 	}
 	return out, nil

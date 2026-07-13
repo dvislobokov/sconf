@@ -1,35 +1,46 @@
 package sconf
 
-import "context"
+import (
+	"context"
+	"time"
 
-// SecretResolver дозаполняет уже связанную конфигурацию значениями из внешнего
-// хранилища секретов (Vault). Реализация живёт в опциональном пакете
-// sconf/vault и регистрируется через RegisterSecretResolver — ядро sconf не
-// зависит ни от какого клиента секретов.
-type SecretResolver interface {
-	// Resolve обходит target (указатель на конфигурацию), находит поля-секреты
-	// и заполняет их. Если полей-секретов нет, реализация обязана вернуть nil,
-	// ничего не требуя от окружения.
-	Resolve(ctx context.Context, target any) error
+	"github.com/dvislobokov/sconf/internal/vault"
+)
+
+// ErrVaultNotConfigured возвращается (через %w) из Load, когда в конфигурации
+// есть поля-секреты, но окружение Vault не настроено (не задан VAULT_ADDR и т.п.).
+var ErrVaultNotConfigured = vault.ErrNotConfigured
+
+// loadOptions — настройки Load, касающиеся секретов.
+type loadOptions struct {
+	watch []vault.WatchOption
 }
 
-// secretResolver — активный резолвер, установленный пакетом sconf/vault
-// через blank-import. nil, если пакет не подключён.
-var secretResolver SecretResolver
+// LoadOption настраивает поведение Load.
+type LoadOption func(*loadOptions)
 
-// RegisterSecretResolver регистрирует резолвер секретов, вызываемый Load после
-// бинда. Обычно вызывается из init() пакета-реализации (sconf/vault); прикладу
-// достаточно blank-импорта:
-//
-//	import _ "github.com/dvislobokov/sconf/vault"
-//
-// Повторная регистрация заменяет предыдущий резолвер.
-func RegisterSecretResolver(r SecretResolver) { secretResolver = r }
+// WithSecretErrorHandler задаёт обработчик ошибок фонового обновления секретов.
+// По умолчанию ошибки молча игнорируются (прежнее значение секрета сохраняется
+// до следующей попытки).
+func WithSecretErrorHandler(fn func(error)) LoadOption {
+	return func(o *loadOptions) { o.watch = append(o.watch, vault.WithErrorHandler(fn)) }
+}
 
-// resolveSecrets применяет зарегистрированный резолвер к target, если он есть.
+// WithSecretRetryBackoff задаёт паузу перед повторной попыткой после ошибки
+// фонового обновления секрета (по умолчанию 30s).
+func WithSecretRetryBackoff(d time.Duration) LoadOption {
+	return func(o *loadOptions) { o.watch = append(o.watch, vault.WithRetryBackoff(d)) }
+}
+
+// resolveSecrets заполняет поля-секреты target из Vault. Если полей-секретов
+// нет, ничего не делает и не требует настроенного окружения Vault.
 func resolveSecrets(ctx context.Context, target any) error {
-	if secretResolver == nil {
-		return nil
-	}
-	return secretResolver.Resolve(ctx, target)
+	return vault.Resolve(ctx, target)
+}
+
+// watchSecrets запускает фоновое обновление секретов target. Горутины
+// обновления живут до отмены ctx; наружу ничего не возвращается.
+func watchSecrets(ctx context.Context, target any, o loadOptions) error {
+	_, err := vault.Watch(ctx, target, o.watch...)
+	return err
 }

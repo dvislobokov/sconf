@@ -87,7 +87,7 @@ func TestWatcherRefreshesInBackground(t *testing.T) {
 	_ = cfg.DB.UnmarshalConfig("db/creds/app?refresh=20ms")
 
 	ctx := context.Background()
-	if err := (resolver{}).Resolve(ctx, &cfg); err != nil {
+	if err := Resolve(ctx, &cfg); err != nil {
 		t.Fatal(err)
 	}
 	first := cfg.DB.Password()

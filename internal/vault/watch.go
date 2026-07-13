@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dvislobokov/sconf"
 	"github.com/dvislobokov/sconf/secret"
 )
 
@@ -64,8 +63,8 @@ func WithRetryBackoff(d time.Duration) WatchOption {
 // его значение до отмены ctx или вызова Stop. Секреты без интервала (или типы,
 // не поддерживающие обновление) пропускаются.
 //
-// Обычно проще использовать vault.Load, который загружает конфигурацию и сразу
-// запускает Watch.
+// Ядро sconf вызывает Watch автоматически в конце Load — прикладу это делать
+// не нужно.
 func Watch(ctx context.Context, target any, opts ...WatchOption) (*Watcher, error) {
 	o := watchOptions{backoff: 30 * time.Second}
 	for _, op := range opts {
@@ -134,30 +133,6 @@ func refreshLoop(ctx context.Context, r secret.Refreshable, o watchOptions) {
 			}
 		}
 	}
-}
-
-// Load загружает конфигурацию через sconf и сразу запускает фоновое обновление
-// секретов. Возвращает конфигурацию и Watcher — вызовите Watcher.Stop при
-// завершении работы (или отмените ctx).
-//
-//	ctx := context.Background()
-//	cfg, watcher, err := vault.Load[Config](ctx,
-//	    sconf.New().AddYAMLFile("appsettings.yaml"),
-//	    os.Args[1:],
-//	    vault.WithErrorHandler(func(err error) { log.Println("vault refresh:", err) }),
-//	)
-//	if err != nil { log.Fatal(err) }
-//	defer watcher.Stop()
-func Load[T any](ctx context.Context, b *sconf.Builder, args []string, opts ...WatchOption) (*T, *Watcher, error) {
-	cfg, err := sconf.LoadContext[T](ctx, b, args)
-	if err != nil {
-		return nil, nil, err
-	}
-	w, err := Watch(ctx, cfg, opts...)
-	if err != nil {
-		return cfg, nil, err
-	}
-	return cfg, w, nil
 }
 
 func closedChan() chan struct{} {

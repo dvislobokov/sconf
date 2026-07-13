@@ -8,14 +8,14 @@
 // (VAULT_ADDR, VAULT_TOKEN, VAULT_AUTH, ...) приходят из окружения — например
 // из Kubernetes.
 //
-// Используется vault.Load — он загружает конфигурацию, заполняет секреты из
-// Vault и запускает их фоновое обновление (AD/DB — раз в полчаса, pki — по TTL).
+// Используется обычный sconf.Load — он сам заполняет секреты из Vault и
+// запускает их фоновое обновление (AD/DB — раз в полчаса, pki — по TTL);
+// обновление живёт, пока не отменён контекст (у Load — до конца процесса).
 // Значения секретов читаются через методы (Username()/Password()/...), потому
-// что фоновый Watcher может обновлять их конкурентно.
+// что фоновое обновление может менять их конкурентно.
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -26,7 +26,6 @@ import (
 
 	"github.com/dvislobokov/sconf"
 	"github.com/dvislobokov/sconf/secret"
-	"github.com/dvislobokov/sconf/vault"
 )
 
 // Config — конфигурация приклада. Секреты объявляются типами из пакета secret;
@@ -46,15 +45,14 @@ func main() {
 	stop := startFakeVault()
 	defer stop()
 
-	// 2. Загрузка конфигурации + фоновое обновление секретов. vault.Load сходит
-	//    в Vault, заполнит секреты и вернёт Watcher, который держит их свежими.
-	//    Если бы поля-секреты были, а окружение Vault не настроено, вернулась бы
-	//    ошибка.
-	ctx := context.Background()
-	cfg, watcher, err := vault.Load[Config](ctx,
+	// 2. Загрузка конфигурации. sconf.Load сам сходит в Vault, заполнит секреты
+	//    и запустит их фоновое обновление — оно живёт до конца процесса, наружу
+	//    ничего останавливать не нужно. Если бы поля-секреты были, а окружение
+	//    Vault не настроено, вернулась бы ошибка.
+	cfg, err := sconf.Load[Config](
 		sconf.New().AddYAMLFile(filepath.Join(sourceDir(), "appsettings.yaml")),
 		os.Args[1:],
-		vault.WithErrorHandler(func(err error) {
+		sconf.WithSecretErrorHandler(func(err error) {
 			fmt.Fprintln(os.Stderr, "vault refresh:", err)
 		}),
 	)
@@ -62,7 +60,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "config error:", err)
 		os.Exit(1)
 	}
-	defer watcher.Stop() // остановить фоновое обновление при выходе
 
 	fmt.Printf("app:      %s\n", cfg.App.Name)
 	fmt.Printf("db creds: user=%s password=%s  (из %s)\n",
@@ -72,7 +69,7 @@ func main() {
 	fmt.Printf("kv extra: region=%s tier=%s  (все ключи: %d)\n",
 		cfg.Extra.Get("region"), cfg.Extra.Get("tier"), len(cfg.Extra.Values()))
 	fmt.Printf("api key:  %s  (из поля api_key)\n", redact(cfg.APIKey.Get()))
-	fmt.Printf("refresh:  %d секрет(ов) обновляются в фоне\n", watcher.Count())
+	fmt.Println("refresh:  секреты обновляются в фоне автоматически")
 }
 
 // startFakeVault поднимает in-process HTTP-сервер, отвечающий как Vault, и

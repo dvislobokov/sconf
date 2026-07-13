@@ -29,8 +29,8 @@ import "sync/atomic"
 //
 //	custom: secret/path?username_field=login&password_field=secret
 //
-// Значения читаются потокобезопасно (методы Username/Password) — их можно
-// обновлять в фоне (см. sconf/vault.Watch). Интервал обновления по умолчанию —
+// Значения читаются потокобезопасно (методы Username/Password) — sconf.Load
+// обновляет их в фоне автоматически. Интервал обновления по умолчанию —
 // раз в 30 минут (или раньше, если lease короче); переопределяется ?refresh=.
 type UserPass struct {
 	refreshState
@@ -112,8 +112,8 @@ func (u *UserPass) Password() string {
 }
 
 // Resolved сообщает, был ли секрет успешно получен из Vault. Полезно для
-// собственной валидации: если false, вероятно, не подключён резолвер
-// (blank-import sconf/vault) либо путь не задан.
+// собственной валидации: если false, вероятно, путь до секрета не задан в
+// конфиге.
 func (u *UserPass) Resolved() bool { return u.data.Load() != nil }
 
 // Path возвращает полный путь до секрета, как он задан в конфиге.
