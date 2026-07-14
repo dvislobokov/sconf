@@ -13,7 +13,8 @@ var ErrVaultNotConfigured = vault.ErrNotConfigured
 
 // loadOptions — настройки Load, касающиеся секретов.
 type loadOptions struct {
-	watch []vault.WatchOption
+	watch   []vault.WatchOption
+	resolve []vault.ResolveOption
 }
 
 // LoadOption настраивает поведение Load.
@@ -32,10 +33,26 @@ func WithSecretRetryBackoff(d time.Duration) LoadOption {
 	return func(o *loadOptions) { o.watch = append(o.watch, vault.WithRetryBackoff(d)) }
 }
 
+// WithVaultWait задаёт суммарное время ожидания доступности Vault при
+// первичной загрузке секретов. Полезно, когда приложение стартует за
+// sidecar-прокси (istio и т.п.) и Vault недоступен первые секунды жизни пода:
+// временные ошибки (сеть, 5xx от прокси) повторяются, пока не истечёт timeout.
+// По умолчанию ожидание выключено — первая же ошибка возвращается из Load.
+// Переменная среды VAULT_WAIT имеет приоритет над опцией.
+func WithVaultWait(timeout time.Duration) LoadOption {
+	return func(o *loadOptions) { o.resolve = append(o.resolve, vault.WithWait(timeout)) }
+}
+
+// WithVaultWaitInterval задаёт паузу между попытками ожидания Vault
+// (по умолчанию 2s). Переменная среды VAULT_WAIT_INTERVAL имеет приоритет.
+func WithVaultWaitInterval(d time.Duration) LoadOption {
+	return func(o *loadOptions) { o.resolve = append(o.resolve, vault.WithWaitInterval(d)) }
+}
+
 // resolveSecrets заполняет поля-секреты target из Vault. Если полей-секретов
 // нет, ничего не делает и не требует настроенного окружения Vault.
-func resolveSecrets(ctx context.Context, target any) error {
-	return vault.Resolve(ctx, target)
+func resolveSecrets(ctx context.Context, target any, o loadOptions) error {
+	return vault.Resolve(ctx, target, o.resolve...)
 }
 
 // watchSecrets запускает фоновое обновление секретов target. Горутины

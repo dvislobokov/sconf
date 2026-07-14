@@ -75,7 +75,7 @@ func LoadContext[T any](ctx context.Context, b *Builder, args []string, opts ...
 	if err := bind.Bind(cfg.m, "", out); err != nil {
 		return nil, err
 	}
-	if err := resolveSecrets(ctx, out); err != nil {
+	if err := resolveSecrets(ctx, out, o); err != nil {
 		return nil, err
 	}
 	if err := watchSecrets(ctx, out, o); err != nil {

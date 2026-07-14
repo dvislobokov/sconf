@@ -45,14 +45,25 @@ func KV(path string, opts ...KVOption) *kvProvider {
 
 // Load читает секрет и возвращает его поля как плоские пары путь→значение.
 // Реализует интерфейс sconf.Provider. Как и поля-секреты, в режиме локальной
-// разработки (VAULT_SECRETS_FILE) читает из файла, а не из Vault.
+// разработки (VAULT_SECRETS_FILE) читает из файла, а не из Vault. Ожидание
+// доступности Vault включается переменными среды VAULT_WAIT /
+// VAULT_WAIT_INTERVAL (см. waitReady).
 func (p *kvProvider) Load() (map[string]string, error) {
 	ctx := context.Background()
-	src, err := newStore(ctx)
+	wait, err := loadWait(waitOptions{})
 	if err != nil {
 		return nil, err
 	}
-	data, _, err := src.fetch(ctx, secret.Request{Method: secret.Read, Path: p.path})
+
+	var data map[string]any
+	err = waitReady(ctx, wait, func() error {
+		src, err := newStore(ctx)
+		if err != nil {
+			return err
+		}
+		data, _, err = src.fetch(ctx, secret.Request{Method: secret.Read, Path: p.path})
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}

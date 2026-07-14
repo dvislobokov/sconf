@@ -589,6 +589,32 @@ On a refresh error the previous value is kept and the secret is retried after
 the backoff; `WithSecretErrorHandler` lets you observe those errors (by default
 they're silent).
 
+### Waiting for Vault at startup
+
+Behind a sidecar proxy (istio, linkerd) the first seconds of a pod's life often
+have no egress: requests to Vault fail with connection errors or a `503` from
+the proxy. By default `Load` returns that error immediately. Enable a startup
+wait and sconf will retry *transient* errors (network failures, `429`/`502`/
+`503`/`504`) until the budget runs out:
+
+```go
+cfg, err := sconf.Load[Config](builder, os.Args[1:],
+    sconf.WithVaultWait(30*time.Second),                  // total wait budget
+    sconf.WithVaultWaitInterval(2*time.Second),           // pause between attempts (default 2s)
+)
+```
+
+Or via the environment — it takes precedence over the options and also applies
+to `AddVaultKV` layers:
+
+```sh
+VAULT_WAIT=30s
+VAULT_WAIT_INTERVAL=2s
+```
+
+Non-transient errors (bad credentials, `403`, missing path) are returned
+immediately — waiting would not fix them.
+
 ### Configuration (environment)
 
 Connection settings come from the environment — the same for secret fields and
@@ -601,6 +627,10 @@ the `AddVaultKV` layers. Works in Kubernetes and anywhere else.
 | `VAULT_NAMESPACE` | namespace (Vault Enterprise / HCP) |
 | `VAULT_MOUNTPATH` | optional prefix prepended to every secret path |
 | `VAULT_TIMEOUT` | per-request timeout (default `30s`) |
+| `VAULT_WAIT` | total time to wait for Vault to become reachable at startup (default: no waiting) — see [Waiting for Vault at startup](#waiting-for-vault-at-startup) |
+| `VAULT_WAIT_INTERVAL` | pause between wait attempts (default `2s`) |
+| `VAULT_MAX_RETRIES` | per-request retries of the underlying HTTP client on `5xx`/`412` (default `2`, `-1` disables) |
+| `VAULT_RETRY_WAIT_MIN` / `VAULT_RETRY_WAIT_MAX` | pause range between those per-request retries (default `1s`–`1.5s`) |
 | `VAULT_SKIP_VERIFY` | skip TLS verification (`1`/`true`) |
 | `VAULT_AUTH` | `token` (default), `kubernetes`, or `approle` |
 | `VAULT_TOKEN` | token — for `VAULT_AUTH=token` |

@@ -15,16 +15,40 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/dvislobokov/sconf/secret"
 	vault "github.com/hashicorp/vault-client-go"
 )
 
+// resolveOptions — настройки Resolve.
+type resolveOptions struct {
+	wait waitOptions
+}
+
+// ResolveOption настраивает поведение Resolve.
+type ResolveOption func(*resolveOptions)
+
+// WithWait задаёт суммарное время ожидания доступности Vault при загрузке:
+// временные ошибки (сеть, 5xx) повторяются, пока не истечёт timeout.
+// По умолчанию ожидание выключено. Переменная среды VAULT_WAIT имеет приоритет.
+func WithWait(timeout time.Duration) ResolveOption {
+	return func(o *resolveOptions) { o.wait.timeout = timeout }
+}
+
+// WithWaitInterval задаёт паузу между попытками ожидания (по умолчанию 2s).
+// Переменная среды VAULT_WAIT_INTERVAL имеет приоритет.
+func WithWaitInterval(d time.Duration) ResolveOption {
+	return func(o *resolveOptions) { o.wait.interval = d }
+}
+
 // Resolve обходит target (указатель на конфигурацию), находит поля-секреты и
 // заполняет их из Vault. Если секретов нет — возвращает nil, ничего не требуя
-// от окружения.
-func Resolve(ctx context.Context, target any) error {
+// от окружения. При включённом ожидании (WithWait или VAULT_WAIT) временные
+// ошибки — Vault ещё недоступен, например за неготовым sidecar-прокси —
+// повторяются, пока не истечёт лимит.
+func Resolve(ctx context.Context, target any, opts ...ResolveOption) error {
 	rv := reflect.ValueOf(target)
 	if rv.Kind() != reflect.Ptr || rv.IsNil() {
 		return nil
@@ -35,15 +59,29 @@ func Resolve(ctx context.Context, target any) error {
 		return nil
 	}
 
-	src, err := newStore(ctx)
+	var ro resolveOptions
+	for _, op := range opts {
+		op(&ro)
+	}
+	wait, err := loadWait(ro.wait)
 	if err != nil {
 		return err
 	}
 
-	for _, s := range found {
-		if err := resolveOne(ctx, src, s); err != nil {
+	err = waitReady(ctx, wait, func() error {
+		src, err := newStore(ctx)
+		if err != nil {
 			return err
 		}
+		for _, s := range found {
+			if err := resolveOne(ctx, src, s); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	for _, wb := range writebacks {
 		wb()
@@ -224,7 +262,51 @@ func newClient(c config) (*vault.Client, error) {
 	if c.TLSSkip {
 		opts = append(opts, vault.WithTLS(vault.TLSConfiguration{InsecureSkipVerify: true}))
 	}
+	rc, set, err := retryConfigFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if set {
+		opts = append(opts, vault.WithRetryConfiguration(rc))
+	}
 	return vault.New(opts...)
+}
+
+// retryConfigFromEnv настраивает внутренние ретраи HTTP-клиента Vault
+// (retryablehttp) из переменных среды. По умолчанию клиент повторяет
+// запрос при 5xx/412 дважды с паузой 1–1.5s.
+//
+//	VAULT_MAX_RETRIES     число повторов (-1 — отключить)
+//	VAULT_RETRY_WAIT_MIN  минимальная пауза между повторами
+//	VAULT_RETRY_WAIT_MAX  максимальная пауза между повторами
+func retryConfigFromEnv() (vault.RetryConfiguration, bool, error) {
+	rc := vault.DefaultConfiguration().RetryConfiguration
+	set := false
+	if v := getenv("VAULT_MAX_RETRIES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return rc, false, fmt.Errorf("vault: invalid VAULT_MAX_RETRIES %q: %w", v, err)
+		}
+		rc.RetryMax = n
+		set = true
+	}
+	if v := getenv("VAULT_RETRY_WAIT_MIN"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return rc, false, fmt.Errorf("vault: invalid VAULT_RETRY_WAIT_MIN %q: %w", v, err)
+		}
+		rc.RetryWaitMin = d
+		set = true
+	}
+	if v := getenv("VAULT_RETRY_WAIT_MAX"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return rc, false, fmt.Errorf("vault: invalid VAULT_RETRY_WAIT_MAX %q: %w", v, err)
+		}
+		rc.RetryWaitMax = d
+		set = true
+	}
+	return rc, set, nil
 }
 
 // joinPath приклеивает необязательный префикс mount к пути секрета.
