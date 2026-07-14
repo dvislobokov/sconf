@@ -1,6 +1,6 @@
 module github.com/dvislobokov/sconf
 
-go 1.24.7
+go 1.21.0
 
 require (
 	github.com/hashicorp/vault-client-go v0.4.3
