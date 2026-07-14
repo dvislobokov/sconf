@@ -31,6 +31,10 @@ func (e *EnvProvider) WithEnviron(fn func() []string) *EnvProvider {
 	return e
 }
 
+// Prefix возвращает префикс переменных среды провайдера. Используется
+// генератором справки для показа полных имён переменных.
+func (e *EnvProvider) Prefix() string { return e.prefix }
+
 func (e *EnvProvider) Load() (map[string]string, error) {
 	env := e.environ
 	if env == nil {

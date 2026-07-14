@@ -112,3 +112,12 @@ func (m *Map) ChildIndices(prefix string) []int {
 
 // Len возвращает число листовых значений.
 func (m *Map) Len() int { return len(m.values) }
+
+// All возвращает копию всех пар "нормализованный ключ -> значение".
+func (m *Map) All() map[string]string {
+	out := make(map[string]string, len(m.values))
+	for k, v := range m.values {
+		out[k] = v
+	}
+	return out
+}

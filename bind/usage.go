@@ -14,6 +14,7 @@ type Entry struct {
 	HasDefault  bool     // задан ли default
 	Enum        []string // допустимые значения (тег enum)
 	Description string   // описание (тег description или usage)
+	EnvVar      string   // явное имя переменной среды (тег env)
 }
 
 // Describe обходит тип t и возвращает список конфигурационных ключей.
@@ -51,6 +52,9 @@ func Usage(t reflect.Type) string {
 		}
 		if e.HasDefault {
 			fmt.Fprintf(&b, "  (default %q)", e.Default)
+		}
+		if e.EnvVar != "" {
+			fmt.Fprintf(&b, "  (env %s)", e.EnvVar)
 		}
 		if e.Description != "" {
 			fmt.Fprintf(&b, "  %s", e.Description)
@@ -112,6 +116,7 @@ func leafEntry(key string, t reflect.Type, field reflect.StructField) Entry {
 		Type:        typeName(t),
 		Enum:        splitList(field.Tag.Get("enum")),
 		Description: description(field),
+		EnvVar:      field.Tag.Get("env"),
 	}
 	if d, ok := field.Tag.Lookup("default"); ok {
 		e.Default, e.HasDefault = d, true

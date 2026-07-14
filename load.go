@@ -17,7 +17,8 @@ var ErrHelp = errors.New("config: help requested")
 // Load — основная точка входа. Она:
 //
 //  1. если в args есть флаг справки (--help и т.п.) — печатает usage,
-//     сгенерированный из T, и возвращает ErrHelp;
+//     сгенерированный из T, и возвращает ErrHelp; рядом с --help можно
+//     передать --format table|env|json|yaml|toml (см. UsageFormat);
 //  2. добавляет args последним (высшим по приоритету) слоем командной строки;
 //  3. собирает конфигурацию из builder и биндит её в новое значение *T.
 //
@@ -59,8 +60,17 @@ func LoadContext[T any](ctx context.Context, b *Builder, args []string, opts ...
 	}
 
 	if HelpRequested(args) {
-		fmt.Fprint(os.Stdout, Usage[T]())
+		out, err := UsageFormat[T](helpFormat(args), builderEnvPrefix(b))
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprint(os.Stdout, out)
 		return nil, ErrHelp
+	}
+	// Поля с тегом env читаются из явно названных переменных среды. Этот слой
+	// сильнее провайдеров билдера, но слабее командной строки.
+	if tags := envTagValues[T](); len(tags) > 0 {
+		b.AddInMemory(tags)
 	}
 	if len(args) > 0 {
 		b.AddCommandLine(args)

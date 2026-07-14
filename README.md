@@ -72,6 +72,7 @@ Requires Go 1.24+.
 - [`.env` files](#env-files)
 - [The entry point: `Load[T]`](#the-entry-point-loadt)
 - [Ad-hoc access and sections](#ad-hoc-access-and-sections)
+- [Dumping the merged configuration](#dumping-the-merged-configuration)
 - [Waiting for files (Vault sidecar) and optional files](#waiting-for-files-vault-sidecar-and-optional-files)
 - [Field tags](#field-tags)
 - [Defaults: the `default` tag](#defaults-the-default-tag)
@@ -271,6 +272,44 @@ db := cfg.Section("database")     // a nested section
 db.GetString("host")              // same as cfg.GetString("database:host")
 ```
 
+## Dumping the merged configuration
+
+To see what the layered merge actually produced, print it — as flat keys, as
+environment variables, or as JSON/YAML/TOML. Pass your config type to get the
+`description`/`usage` tags as comments:
+
+```go
+cfg, _ := builder.Build()
+
+out, _ := sconf.Dump[Settings](cfg, sconf.DumpKeys)
+fmt.Print(out)
+// # db host
+// database:host = db.local
+// database:port = 5432
+
+out, _ = sconf.Dump[Settings](cfg, sconf.DumpEnv, sconf.WithDumpEnvPrefix("APP_"))
+fmt.Print(out)
+// # db host
+// APP_DATABASE__HOST=db.local
+// APP_DATABASE__PORT=5432
+```
+
+| Format | Output |
+|--------|--------|
+| `sconf.DumpKeys` | flat `key = value` lines, `#` description comments |
+| `sconf.DumpEnv` | `KEY__SUB=value` lines (compatible with `.env` / `AddEnvironmentVariables`), `#` comments |
+| `sconf.DumpJSON` / `DumpYAML` / `DumpTOML` | nested document; data only — JSON has no comments, and the YAML/TOML marshalers don't emit them |
+
+Notes:
+
+- `sconf.DumpValues(cfg, format)` is the same without a type (no descriptions).
+- All values print as strings — that's the internal model.
+- On a `cfg.Section("database")` only that section's keys are printed.
+- Secret *fields* hold Vault paths in the config, not secret values — safe to
+  print. But an `AddVaultKV` layer puts real values into the tree: mask them
+  with `sconf.WithDumpRedact("api_key", "database")` (redacts the key and
+  everything under it as `***`).
+
 ## Waiting for files (Vault sidecar) and optional files
 
 When a secret is mounted by a sidecar (e.g. Vault Agent), the file may not exist
@@ -325,6 +364,25 @@ The full set of tags:
 | `default:"…"` | fallback value when no source provides the key |
 | `enum:"a,b,c"` | closed set of allowed values (validated + shown in usage) |
 | `description:"…"` / `usage:"…"` | description for usage (first non-empty) |
+| `env:"NAME"` | read this field from the exact env var `NAME` (see below) |
+
+The `env` tag binds a field to an explicitly named environment variable — no
+prefix, no `__` convention:
+
+```go
+type Settings struct {
+    DB struct {
+        Host string `env:"DB_HOST"`
+    }
+}
+// DB_HOST=prod-db  ->  cfg.DB.Host == "prod-db"
+```
+
+It participates in layering between the builder's providers and the command
+line: `files/env layers < env tag < CLI args`. The name is also shown in
+`--help` (`(env DB_HOST)`) and used by the `env` output of `--help --format`
+and `Dump`. Inside slice/map elements the tag is ignored — one variable can't
+address a particular element.
 
 ## Defaults: the `default` tag
 
@@ -391,6 +449,53 @@ Keys are shown in command-line form (`--section:key`) — exactly how they are
 accepted from arguments. You can also generate help manually:
 `sconf.Usage[T]() string`, `sconf.HelpRequested(args) bool`, and the structured
 data via `sconf.Describe[T]() []sconf.UsageEntry`.
+
+### `--help --format …`
+
+Next to `--help` the service accepts `--format table|env|json|yaml|toml` — so
+anyone can see which variables the service understands, in the form they need:
+
+```sh
+go run . --help --format env
+```
+
+```sh
+# listen host (string, default "0.0.0.0")
+APP_HOST=0.0.0.0
+# run mode (string, one of dev|prod, default "dev")
+APP_MODE=dev
+# db host (string)
+DB_HOST=
+```
+
+- `table` (default) — the human-readable listing above;
+- `env` — a ready-to-fill `.env` template: real variable names (the prefix is
+  taken from the builder's `AddEnvironmentVariables`, an `env` tag wins as-is),
+  defaults as values, descriptions as comments;
+- `json` / `yaml` / `toml` — the schema as a list of entries
+  (`key`, `env`, `type`, `default`, `enum`, `description`) for tooling and docs.
+
+Programmatic access: `sconf.UsageFormat[T](format, envPrefix)`.
+
+### The same over HTTP
+
+`sconf.UsageHandler[T](envPrefix)` serves the schema as an endpoint — a plain
+`http.Handler`, so it plugs into any router. The `format` query parameter
+selects the output (same five formats, `table` by default); the response is
+always bare text:
+
+```go
+mux.Handle("/config/usage", sconf.UsageHandler[Config]("APP_"))       // net/http
+r.GET("/config/usage", gin.WrapH(sconf.UsageHandler[Config]("APP_"))) // gin
+e.GET("/config/usage", echo.WrapHandler(sconf.UsageHandler[Config]("APP_")))
+```
+
+```sh
+curl localhost:8080/config/usage?format=env
+```
+
+Only the schema is served (keys, types, defaults, enum, descriptions) — no
+configuration *values* leave the process. An unknown format returns `400`.
 
 ## Custom parsing: `Unmarshaler`
 
