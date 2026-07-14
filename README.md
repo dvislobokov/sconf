@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/dvislobokov/sconf/actions/workflows/ci.yml/badge.svg)](https://github.com/dvislobokov/sconf/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/dvislobokov/sconf.svg)](https://pkg.go.dev/github.com/dvislobokov/sconf)
+[![Go Report Card](https://goreportcard.com/badge/github.com/dvislobokov/sconf)](https://goreportcard.com/report/github.com/dvislobokov/sconf)
 
 A layered configuration library for Go, modeled after
 `Microsoft.Extensions.Configuration` (ASP.NET Core). **No `viper`.**
