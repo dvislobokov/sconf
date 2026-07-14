@@ -615,6 +615,37 @@ VAULT_WAIT_INTERVAL=2s
 Non-transient errors (bad credentials, `403`, missing path) are returned
 immediately — waiting would not fix them.
 
+**Istio example.** Until the `istio-proxy` sidecar is ready, all egress from
+the app container is black-holed or answered with `503 UF` by envoy — so an
+app that reads Vault secrets on startup crash-loops. Give it a wait budget in
+the Deployment:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: billing-api
+          env:
+            - name: VAULT_ADDR
+              value: https://vault.internal:8200
+            - name: VAULT_AUTH
+              value: kubernetes
+            - name: VAULT_K8S_ROLE
+              value: billing-api
+            - name: VAULT_WAIT          # ride out the sidecar startup window
+              value: 30s
+            - name: VAULT_WAIT_INTERVAL
+              value: 2s
+```
+
+This complements istio's own knob — `holdApplicationUntilProxyStarts: true`
+(pod annotation `proxy.istio.io/config: '{ "holdApplicationUntilProxyStarts": true }'`)
+delays the app container until the sidecar is up, but does not cover an egress
+gateway or Vault itself being briefly unavailable; `VAULT_WAIT` handles both.
+
 ### Configuration (environment)
 
 Connection settings come from the environment — the same for secret fields and
