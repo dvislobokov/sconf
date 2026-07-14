@@ -47,6 +47,15 @@ func (b *Builder) AddEnvironmentVariables(prefix string) *Builder {
 	return b.Add(provider.Env(prefix))
 }
 
+// AddDotEnvFile добавляет .env-файл: строки KEY=VALUE трактуются как
+// переменные среды (prefix отсекается, "__" превращается в ":"). Удобно для
+// локальной разработки — тот же файл, что скармливается direnv или docker
+// compose, читается напрямую, без экспорта в окружение. Реальные переменные
+// среды процесса не затрагиваются.
+func (b *Builder) AddDotEnvFile(path, prefix string, opts ...FileOption) *Builder {
+	return b.Add(provider.DotEnvFile(path, prefix, opts...))
+}
+
 // AddCommandLine добавляет аргументы командной строки (обычно os.Args[1:]).
 func (b *Builder) AddCommandLine(args []string) *Builder {
 	return b.Add(provider.Args(args))

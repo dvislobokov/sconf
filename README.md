@@ -29,7 +29,7 @@ cfg, err := sconf.Load[Config](
 
 ## Features
 
-- **Formats out of the box:** JSON, YAML, TOML, environment variables, command
+- **Formats out of the box:** JSON, YAML, TOML, `.env` files, environment variables, command
   line, in-memory.
 - **Env → arrays of objects** using the `__` → `:` convention.
 - **Per-key override** of a single array element from an env var — something
@@ -58,7 +58,7 @@ Requires Go 1.24+.
 | Package | Contents |
 |---------|----------|
 | `sconf` | `Builder`, `Config`, `Load[T]`, `Usage[T]`, errors, option re-exports, built-in Vault integration |
-| `sconf/provider` | `JSONFile`, `YAMLFile`, `TOMLFile`, `Env`, `Args`, `Map` |
+| `sconf/provider` | `JSONFile`, `YAMLFile`, `TOMLFile`, `DotEnvFile`, `Env`, `Args`, `Map` |
 | `sconf/bind` | reflection binder (`Unmarshaler`, `Validator`) |
 | `sconf/secret` | secret field types (`UserPass`, `Cert`) — no external deps |
 | `sconf/internal/vault` | Vault client internals (`vault-client-go`) — used by the core, not imported directly |
@@ -69,6 +69,7 @@ Requires Go 1.24+.
 - [Quick start](#quick-start)
 - [Layering and precedence](#layering-and-precedence)
 - [Environment variables → arrays of objects](#environment-variables--arrays-of-objects)
+- [`.env` files](#env-files)
 - [The entry point: `Load[T]`](#the-entry-point-loadt)
 - [Ad-hoc access and sections](#ad-hoc-access-and-sections)
 - [Waiting for files (Vault sidecar) and optional files](#waiting-for-files-vault-sidecar-and-optional-files)
@@ -194,6 +195,36 @@ Because everything collapses into one flat model, an env var can override a
 ```go
 // servers[0] == {Host: "env", Port: 1}
 ```
+
+## `.env` files
+
+For local development you can read a dotenv file directly — no `direnv`, no
+exporting. Lines are treated exactly like environment variables (the prefix is
+stripped, `__` becomes `:`), but the process environment is not touched:
+
+```go
+cfg, err := sconf.Load[Settings](
+    sconf.New().
+        AddYAMLFile("appsettings.yaml").
+        AddDotEnvFile(".env", "APP_", sconf.Optional()). // skipped when absent (CI, prod)
+        AddEnvironmentVariables("APP_"),                 // real env still wins
+    os.Args[1:],
+)
+```
+
+```sh
+# .env — the usual dotenv syntax
+APP_DATABASE__HOST=localhost
+export APP_DATABASE__PORT=5432        # optional export prefix
+APP_GREETING="hello\nworld"           # double quotes expand \n \t \" \\
+APP_TOKEN='as $is'                    # single quotes are literal
+```
+
+File options (`Optional`, `Wait`, `PollInterval`) work the same as for
+JSON/YAML/TOML files. Multiline values and variable expansion are not
+supported. Note that a `.env` holding `VAULT_ADDR` and friends configures the
+*process* environment — sconf reads Vault settings from real env vars, so
+those still need `direnv`/`docker compose` or manual export.
 
 ## The entry point: `Load[T]`
 
