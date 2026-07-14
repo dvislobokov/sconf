@@ -23,6 +23,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
+	"time"
 
 	"github.com/dvislobokov/sconf"
 	"github.com/dvislobokov/sconf/secret"
@@ -49,9 +51,15 @@ func main() {
 	//    и запустит их фоновое обновление — оно живёт до конца процесса, наружу
 	//    ничего останавливать не нужно. Если бы поля-секреты были, а окружение
 	//    Vault не настроено, вернулась бы ошибка.
+	//
+	//    Наш игрушечный Vault первые запросы отвечает 503 — как sidecar-прокси
+	//    (istio), пока egress не поднялся. WithVaultWait велит Load повторять
+	//    временные ошибки (сеть, 5xx), пока Vault не оживёт или не истечёт лимит.
 	cfg, err := sconf.Load[Config](
 		sconf.New().AddYAMLFile(filepath.Join(sourceDir(), "appsettings.yaml")),
 		os.Args[1:],
+		sconf.WithVaultWait(30*time.Second),
+		sconf.WithVaultWaitInterval(500*time.Millisecond),
 		sconf.WithSecretErrorHandler(func(err error) {
 			fmt.Fprintln(os.Stderr, "vault refresh:", err)
 		}),
@@ -72,8 +80,14 @@ func main() {
 	fmt.Println("refresh:  секреты обновляются в фоне автоматически")
 }
 
+// notReadyRequests — сколько первых запросов фейк отвечает 503, изображая
+// неготовый sidecar-прокси перед Vault.
+const notReadyRequests = 2
+
 // startFakeVault поднимает in-process HTTP-сервер, отвечающий как Vault, и
-// выставляет VAULT_ADDR/VAULT_TOKEN. Возвращает функцию остановки.
+// выставляет VAULT_ADDR/VAULT_TOKEN. Первые notReadyRequests запросов сервер
+// отвечает 503 — чтобы показать работу sconf.WithVaultWait. Возвращает
+// функцию остановки.
 func startFakeVault() func() {
 	responses := map[string]map[string]any{
 		"database/creds/app-role": {
@@ -97,7 +111,13 @@ func startFakeVault() func() {
 		},
 	}
 
+	var requests atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if int(requests.Add(1)) <= notReadyRequests {
+			fmt.Fprintln(os.Stderr, "fake vault: egress ещё не готов, отвечаю 503")
+			http.Error(w, `{"errors":["upstream connect error"]}`, http.StatusServiceUnavailable)
+			return
+		}
 		path := r.URL.Path[len("/v1/"):]
 		data, ok := responses[path]
 		if !ok {
@@ -110,6 +130,9 @@ func startFakeVault() func() {
 	_ = os.Setenv("VAULT_ADDR", srv.URL)
 	_ = os.Setenv("VAULT_TOKEN", "dev-root-token")
 	// VAULT_AUTH по умолчанию token, поэтому больше ничего не нужно.
+	// Отключаем внутренние ретраи HTTP-клиента (по умолчанию 2 повтора с паузой
+	// ~1s), чтобы в выводе было видно именно ожидание via WithVaultWait.
+	_ = os.Setenv("VAULT_MAX_RETRIES", "-1")
 
 	return srv.Close
 }
