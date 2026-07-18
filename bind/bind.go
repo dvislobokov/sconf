@@ -27,6 +27,22 @@ type Unmarshaler interface {
 	UnmarshalConfig(value string) error
 }
 
+// applier — тип, умеющий принять поля секции конфигурации напрямую, в виде
+// отображения (в той же форме, что ответ Vault). Реализуется типами секретов
+// (secret.UserPass и т.п.): благодаря этому секрет можно задать в конфиге
+// вложенными полями вместо пути:
+//
+//	db_cred:
+//	  username: devuser
+//	  password: devpass
+//
+// Если по пути поля есть и скаляр (путь Vault), и вложенная секция —
+// побеждает секция: так локальный слой конфигурации может переопределить
+// боевой путь готовыми значениями.
+type applier interface {
+	Apply(data map[string]any) error
+}
+
 // Validator, если реализован целевым типом, вызывается после успешного бинда.
 type Validator interface {
 	Validate() error
@@ -62,6 +78,21 @@ func bindValue(m *flat.Map, path string, rv reflect.Value, meta *fieldMeta) erro
 	// Кастомный Unmarshaler имеет приоритет над reflection.
 	if rv.CanAddr() {
 		if u, ok := rv.Addr().Interface().(Unmarshaler); ok {
+			// Вложенная форма: если тип умеет принять поля напрямую (applier)
+			// и по пути есть секция — применяем её. Секция побеждает скаляр.
+			if a, ok := rv.Addr().Interface().(applier); ok {
+				if fields := m.ChildSegments(path); len(fields) > 0 {
+					data := make(map[string]any, len(fields))
+					for _, seg := range fields {
+						data[seg] = subtree(m, flat.Combine(path, seg))
+					}
+					if err := a.Apply(data); err != nil {
+						return fmt.Errorf("config: cannot bind section %q to %s: %w (%v)",
+							path, rv.Type(), ErrBindType, err)
+					}
+					return validate(path, rv)
+				}
+			}
 			s, has, err := effectiveValue(m, path, meta)
 			if err != nil {
 				return err
@@ -112,6 +143,28 @@ func bindValue(m *flat.Map, path string, rv reflect.Value, meta *fieldMeta) erro
 		}
 		return validate(path, rv)
 	}
+}
+
+// subtree восстанавливает поддерево плоских ключей под path во вложенную
+// структуру: лист — строка, числовые сегменты — []any, секция — map[string]any.
+// При конфликте «и лист, и секция» побеждает лист.
+func subtree(m *flat.Map, path string) any {
+	if s, ok := m.Get(path); ok {
+		return s
+	}
+	segs := m.ChildSegments(path)
+	if idx := m.ChildIndices(path); len(idx) > 0 && len(idx) == len(segs) {
+		out := make([]any, 0, len(idx))
+		for _, i := range idx {
+			out = append(out, subtree(m, flat.Combine(path, strconv.Itoa(i))))
+		}
+		return out
+	}
+	out := make(map[string]any, len(segs))
+	for _, seg := range segs {
+		out[seg] = subtree(m, flat.Combine(path, seg))
+	}
+	return out
 }
 
 func bindStruct(m *flat.Map, path string, rv reflect.Value) error {

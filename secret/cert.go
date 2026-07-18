@@ -1,6 +1,9 @@
 package secret
 
-import "sync/atomic"
+import (
+	"fmt"
+	"sync/atomic"
+)
 
 // Cert — сертификат и закрытый ключ, выпускаемые движком pki Vault. Выпуск —
 // это запись с параметрами (Method Write) по пути pki/issue/<role>:
@@ -32,8 +35,18 @@ type certData struct {
 	serialNumber string
 }
 
-// UnmarshalConfig принимает путь и параметры выпуска сертификата.
+// UnmarshalConfig принимает путь и параметры выпуска сертификата либо готовый
+// сертификат напрямую — "plain:" + JSON/YAML/TOML-отображение с полями
+// certificate/private_key/issuing_ca/ca_chain/serial_number. Plain-значение
+// применяется сразу, Vault не требуется (и перевыпуска в фоне нет).
 func (c *Cert) UnmarshalConfig(value string) error {
+	if payload, ok := plainPayload(value); ok {
+		m, err := decodeMap(payload)
+		if err != nil {
+			return fmt.Errorf("secret: plain cert: %w", err)
+		}
+		return c.Apply(m)
+	}
 	r, err := parseRef(value)
 	if err != nil {
 		return err

@@ -56,6 +56,7 @@ func Resolve(ctx context.Context, target any, opts ...ResolveOption) error {
 	}
 
 	found, writebacks := collect(rv.Elem())
+	found = needsVault(found)
 	if len(found) == 0 {
 		return nil
 	}
@@ -126,6 +127,24 @@ func secretsFilePath() string {
 		return defaultSecretsFile
 	}
 	return ""
+}
+
+// needsVault отфильтровывает секреты, которым поход в Vault не нужен: значения,
+// заданные в конфиге напрямую (plain:), уже применены при бинде — у них пустой
+// путь и Resolved() == true. Секрет с пустым путём, но НЕ заполненный (поле
+// объявлено, а в конфиге не задано), остаётся в списке — по нему resolveOne
+// вернёт понятную ошибку.
+func needsVault(found []secret.Resolvable) []secret.Resolvable {
+	out := found[:0]
+	for _, s := range found {
+		if s.SecretRequest().Path == "" {
+			if r, ok := s.(interface{ Resolved() bool }); ok && r.Resolved() {
+				continue
+			}
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // resolveOne получает данные секрета из src, раскладывает их и обновляет интервал.

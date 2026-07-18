@@ -29,8 +29,17 @@ type KV struct {
 	values atomic.Pointer[map[string]string]
 }
 
-// UnmarshalConfig принимает полный путь до KV-секрета.
+// UnmarshalConfig принимает полный путь до KV-секрета либо значение напрямую —
+// "plain:" + JSON/YAML/TOML-отображение полей. Plain-значение применяется
+// сразу, Vault не требуется.
 func (k *KV) UnmarshalConfig(value string) error {
+	if payload, ok := plainPayload(value); ok {
+		m, err := decodeMap(payload)
+		if err != nil {
+			return fmt.Errorf("secret: plain kv: %w", err)
+		}
+		return k.Apply(m)
+	}
 	r, err := parseRef(value)
 	if err != nil {
 		return err
@@ -96,8 +105,14 @@ type Value struct {
 	value atomic.Pointer[string]
 }
 
-// UnmarshalConfig принимает полный путь до секрета и (опционально) имя поля.
+// UnmarshalConfig принимает полный путь до секрета и (опционально) имя поля
+// либо значение напрямую — "plain:<строка>" используется как есть, без похода
+// в Vault и без разбора.
 func (v *Value) UnmarshalConfig(value string) error {
+	if payload, ok := plainPayload(value); ok {
+		v.value.Store(&payload)
+		return nil
+	}
 	r, err := parseRef(value)
 	if err != nil {
 		return err

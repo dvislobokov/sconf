@@ -15,14 +15,23 @@
 //
 // sconf.Load после бинда обходит структуру, находит поля-Resolvable и
 // заполняет их из Vault автоматически.
+//
+// Без Vault значение можно задать в конфиге напрямую: вложенной секцией с теми
+// же полями, что вернул бы Vault (для Value — единственное поле value), либо
+// однострочно через префикс "plain:" (см. PlainPrefix). Вложенная секция
+// побеждает путь из другого слоя конфигурации.
 package secret
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	toml "github.com/pelletier/go-toml/v2"
+	"gopkg.in/yaml.v3"
 )
 
 // reservedParams — параметры пути, управляющие резолвером/обновлением, а не
@@ -99,6 +108,43 @@ func (r ref) refreshParam() time.Duration {
 		return 0
 	}
 	return d
+}
+
+// PlainPrefix помечает значение секрета, заданное в конфиге напрямую, без
+// Vault: "plain:<значение>". Для UserPass/KV/Cert значение — текст-отображение
+// в формате JSON, YAML или TOML (те же поля, что вернул бы Vault); для Value —
+// готовая строка как есть. Такие секреты не требуют настроенного окружения
+// Vault и не обновляются в фоне. Удобно для локальной разработки и стендов
+// без Vault; помните, что секрет при этом лежит в конфигурации открытым
+// текстом (и попадает в Dump).
+const PlainPrefix = "plain:"
+
+// plainPayload возвращает значение после PlainPrefix, если префикс есть.
+func plainPayload(value string) (string, bool) {
+	return strings.CutPrefix(strings.TrimSpace(value), PlainPrefix)
+}
+
+// decodeMap разбирает текстовое значение секрета в отображение ключ→значение,
+// пробуя форматы по порядку: JSON, YAML, TOML. Возвращает ошибку, если текст
+// не является отображением ни в одном из форматов.
+func decodeMap(text string) (map[string]any, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, fmt.Errorf("secret: field value is empty")
+	}
+	b := []byte(text)
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err == nil && m != nil {
+		return m, nil
+	}
+	m = nil
+	if err := yaml.Unmarshal(b, &m); err == nil && m != nil {
+		return m, nil
+	}
+	m = nil
+	if err := toml.Unmarshal(b, &m); err == nil && m != nil {
+		return m, nil
+	}
+	return nil, fmt.Errorf("secret: value is not a JSON, YAML or TOML mapping")
 }
 
 // ref — разобранное строковое значение поля секрета: путь и доп. параметры.

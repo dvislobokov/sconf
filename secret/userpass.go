@@ -1,13 +1,9 @@
 package secret
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
-
-	toml "github.com/pelletier/go-toml/v2"
-	"gopkg.in/yaml.v3"
 )
 
 // UserPass — пара логин/пароль, получаемая из Vault чтением по ПОЛНОМУ пути
@@ -64,10 +60,18 @@ type userPassData struct {
 	password string
 }
 
-// UnmarshalConfig принимает строковое значение из конфига (полный путь до
-// секрета, опционально с параметрами username_field/password_field/refresh) и
-// запоминает его для последующего резолвинга.
+// UnmarshalConfig принимает строковое значение из конфига: полный путь до
+// секрета (опционально с параметрами username_field/password_field/refresh)
+// либо значение напрямую — "plain:" + JSON/YAML/TOML-отображение с полями
+// username/password. Plain-значение применяется сразу, Vault не требуется.
 func (u *UserPass) UnmarshalConfig(value string) error {
+	if payload, ok := plainPayload(value); ok {
+		m, err := decodeMap(payload)
+		if err != nil {
+			return fmt.Errorf("secret: plain userpass: %w", err)
+		}
+		return u.Apply(m)
+	}
 	r, err := parseRef(value)
 	if err != nil {
 		return err
@@ -105,29 +109,6 @@ func (u *UserPass) Apply(data map[string]any) error {
 		password: u.password(d),
 	})
 	return nil
-}
-
-// decodeMap разбирает текстовое значение поля секрета в отображение
-// ключ→значение, пробуя форматы по порядку: JSON, YAML, TOML. Возвращает
-// ошибку, если текст не является отображением ни в одном из форматов.
-func decodeMap(text string) (map[string]any, error) {
-	if strings.TrimSpace(text) == "" {
-		return nil, fmt.Errorf("secret: field value is empty")
-	}
-	b := []byte(text)
-	var m map[string]any
-	if err := json.Unmarshal(b, &m); err == nil && m != nil {
-		return m, nil
-	}
-	m = nil
-	if err := yaml.Unmarshal(b, &m); err == nil && m != nil {
-		return m, nil
-	}
-	m = nil
-	if err := toml.Unmarshal(b, &m); err == nil && m != nil {
-		return m, nil
-	}
-	return nil, fmt.Errorf("secret: value is not a JSON, YAML or TOML mapping")
 }
 
 // password выбирает поле пароля из ответа. Явный password_field имеет приоритет;

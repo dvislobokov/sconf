@@ -168,6 +168,71 @@ func TestUserPassFromKVFieldBadText(t *testing.T) {
 	}
 }
 
+func TestUserPassPlain(t *testing.T) {
+	cases := map[string]string{
+		"json": `plain:{"username": "u", "password": "p"}`,
+		"yaml": "plain:username: u\npassword: p\n",
+		"toml": "plain:username = \"u\"\npassword = \"p\"\n",
+	}
+	for name, value := range cases {
+		var u UserPass
+		if err := u.UnmarshalConfig(value); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !u.Resolved() {
+			t.Fatalf("%s: must be resolved right after UnmarshalConfig", name)
+		}
+		if u.Username() != "u" || u.Password() != "p" {
+			t.Fatalf("%s: got %q/%q", name, u.Username(), u.Password())
+		}
+		if u.SecretRequest().Path != "" {
+			t.Fatalf("%s: plain secret must not request Vault", name)
+		}
+	}
+}
+
+func TestUserPassPlainBadText(t *testing.T) {
+	var u UserPass
+	if err := u.UnmarshalConfig("plain:just text"); err == nil {
+		t.Fatal("expected error for unparsable plain value")
+	}
+	if err := u.UnmarshalConfig("plain:"); err == nil {
+		t.Fatal("expected error for empty plain value")
+	}
+}
+
+func TestValuePlain(t *testing.T) {
+	var v Value
+	// Значение берётся как есть, без разбора — даже если похоже на путь или JSON.
+	if err := v.UnmarshalConfig("plain:sk_test_51?not=parsed"); err != nil {
+		t.Fatal(err)
+	}
+	if !v.Resolved() || v.Get() != "sk_test_51?not=parsed" {
+		t.Fatalf("got %q resolved=%v", v.Get(), v.Resolved())
+	}
+}
+
+func TestKVPlain(t *testing.T) {
+	var k KV
+	if err := k.UnmarshalConfig(`plain:{"region": "local", "tier": "dev"}`); err != nil {
+		t.Fatal(err)
+	}
+	if k.Get("region") != "local" || k.Get("tier") != "dev" {
+		t.Fatalf("got %v", k.Values())
+	}
+}
+
+func TestCertPlain(t *testing.T) {
+	var c Cert
+	err := c.UnmarshalConfig("plain:certificate: CERT\nprivate_key: KEY\nserial_number: dev-01\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Certificate() != "CERT" || c.PrivateKey() != "KEY" || c.SerialNumber() != "dev-01" {
+		t.Fatalf("got %q/%q/%q", c.Certificate(), c.PrivateKey(), c.SerialNumber())
+	}
+}
+
 func TestCertUnmarshalWithParams(t *testing.T) {
 	var c Cert
 	if err := c.UnmarshalConfig("pki/issue/web?common_name=app.example.com&ttl=24h"); err != nil {

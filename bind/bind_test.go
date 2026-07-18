@@ -133,6 +133,95 @@ func TestBindUnmarshaler(t *testing.T) {
 	}
 }
 
+// fakeSecret имитирует тип секрета: строка — «путь», секция — готовые данные.
+type fakeSecret struct {
+	path string
+	data map[string]any
+}
+
+func (f *fakeSecret) UnmarshalConfig(value string) error {
+	f.path = value
+	return nil
+}
+
+func (f *fakeSecret) Apply(data map[string]any) error {
+	if _, bad := data["boom"]; bad {
+		return errors.New("boom")
+	}
+	f.data = data
+	return nil
+}
+
+func TestBindApplierNestedSection(t *testing.T) {
+	m := mapOf(map[string]string{
+		"cred:username":     "u",
+		"cred:password":     "p",
+		"cred:chain:0":      "a",
+		"cred:chain:1":      "b",
+		"cred:extra:region": "local",
+	})
+	var v struct {
+		Cred fakeSecret `yaml:"cred"`
+	}
+	if err := Bind(m, "", &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.Cred.path != "" {
+		t.Errorf("UnmarshalConfig не должен вызываться для секции: %q", v.Cred.path)
+	}
+	if v.Cred.data["username"] != "u" || v.Cred.data["password"] != "p" {
+		t.Errorf("data = %+v", v.Cred.data)
+	}
+	if chain, ok := v.Cred.data["chain"].([]any); !ok || len(chain) != 2 || chain[0] != "a" {
+		t.Errorf("chain = %+v", v.Cred.data["chain"])
+	}
+	if extra, ok := v.Cred.data["extra"].(map[string]any); !ok || extra["region"] != "local" {
+		t.Errorf("extra = %+v", v.Cred.data["extra"])
+	}
+}
+
+func TestBindApplierSectionBeatsScalar(t *testing.T) {
+	// И путь-скаляр, и секция: побеждает секция (локальный слой переопределяет
+	// боевой путь готовыми значениями).
+	m := mapOf(map[string]string{
+		"cred":          "database/creds/app",
+		"cred:username": "u",
+	})
+	var v struct {
+		Cred fakeSecret `yaml:"cred"`
+	}
+	if err := Bind(m, "", &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.Cred.path != "" || v.Cred.data["username"] != "u" {
+		t.Errorf("секция должна победить: path=%q data=%+v", v.Cred.path, v.Cred.data)
+	}
+}
+
+func TestBindApplierScalarStillWorks(t *testing.T) {
+	m := mapOf(map[string]string{"cred": "database/creds/app"})
+	var v struct {
+		Cred fakeSecret `yaml:"cred"`
+	}
+	if err := Bind(m, "", &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.Cred.path != "database/creds/app" || v.Cred.data != nil {
+		t.Errorf("скаляр должен идти через UnmarshalConfig: %+v", v.Cred)
+	}
+}
+
+func TestBindApplierError(t *testing.T) {
+	m := mapOf(map[string]string{"cred:boom": "x"})
+	var v struct {
+		Cred fakeSecret `yaml:"cred"`
+	}
+	err := Bind(m, "", &v)
+	if err == nil || !errors.Is(err, ErrBindType) {
+		t.Fatalf("ожидалась ошибка ErrBindType, got %v", err)
+	}
+}
+
 type mustHavePort struct{ Port int }
 
 func (s *mustHavePort) Validate() error {
