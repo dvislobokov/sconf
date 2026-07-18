@@ -82,6 +82,92 @@ func TestUserPassPasswordFieldOverride(t *testing.T) {
 	}
 }
 
+func TestUserPassFromKVFieldJSON(t *testing.T) {
+	var u UserPass
+	_ = u.UnmarshalConfig("A/APP/OSH/KV/secrets?field=redis")
+	err := u.Apply(map[string]any{
+		"redis": `{"username": "svc", "password": "pw-json"}`,
+		"other": "ignored",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Username() != "svc" || u.Password() != "pw-json" {
+		t.Fatalf("got %q/%q", u.Username(), u.Password())
+	}
+}
+
+func TestUserPassFromKVFieldYAML(t *testing.T) {
+	var u UserPass
+	_ = u.UnmarshalConfig("kv/secrets?field=redis")
+	if err := u.Apply(map[string]any{"redis": "username: svc\npassword: pw-yaml\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if u.Username() != "svc" || u.Password() != "pw-yaml" {
+		t.Fatalf("got %q/%q", u.Username(), u.Password())
+	}
+}
+
+func TestUserPassFromKVFieldTOML(t *testing.T) {
+	var u UserPass
+	_ = u.UnmarshalConfig("kv/secrets?field=redis")
+	if err := u.Apply(map[string]any{"redis": "username = \"svc\"\npassword = \"pw-toml\"\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if u.Username() != "svc" || u.Password() != "pw-toml" {
+		t.Fatalf("got %q/%q", u.Username(), u.Password())
+	}
+}
+
+func TestUserPassFromKVFieldWithOverrides(t *testing.T) {
+	// username_field/password_field применяются к разобранному содержимому поля.
+	var u UserPass
+	_ = u.UnmarshalConfig("kv/secrets?field=redis&username_field=login&password_field=secret")
+	if err := u.Apply(map[string]any{"redis": `{"login": "u", "secret": "p"}`}); err != nil {
+		t.Fatal(err)
+	}
+	if u.Username() != "u" || u.Password() != "p" {
+		t.Fatalf("got %q/%q", u.Username(), u.Password())
+	}
+}
+
+func TestUserPassFromKVFieldKVv2(t *testing.T) {
+	// Обёртка KV v2 (data/metadata) снимается перед выбором поля.
+	var u UserPass
+	_ = u.UnmarshalConfig("secret/data/app?field=redis")
+	err := u.Apply(map[string]any{
+		"data":     map[string]any{"redis": `{"username": "svc", "password": "pw"}`},
+		"metadata": map[string]any{"version": 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Username() != "svc" || u.Password() != "pw" {
+		t.Fatalf("got %q/%q", u.Username(), u.Password())
+	}
+}
+
+func TestUserPassFromKVFieldMissing(t *testing.T) {
+	var u UserPass
+	_ = u.UnmarshalConfig("kv/secrets?field=nope")
+	err := u.Apply(map[string]any{"redis": "{}"})
+	if err == nil {
+		t.Fatal("expected error for missing field")
+	}
+}
+
+func TestUserPassFromKVFieldBadText(t *testing.T) {
+	// Голый текст, не являющийся отображением ни в одном формате, — ошибка.
+	var u UserPass
+	_ = u.UnmarshalConfig("kv/secrets?field=redis")
+	if err := u.Apply(map[string]any{"redis": "just a plain string"}); err == nil {
+		t.Fatal("expected error for unparsable field text")
+	}
+	if err := u.Apply(map[string]any{"redis": ""}); err == nil {
+		t.Fatal("expected error for empty field text")
+	}
+}
+
 func TestCertUnmarshalWithParams(t *testing.T) {
 	var c Cert
 	if err := c.UnmarshalConfig("pki/issue/web?common_name=app.example.com&ttl=24h"); err != nil {

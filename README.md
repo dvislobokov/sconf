@@ -61,7 +61,7 @@ Requires Go 1.24+.
 | `sconf` | `Builder`, `Config`, `Load[T]`, `Usage[T]`, errors, option re-exports, built-in Vault integration |
 | `sconf/provider` | `JSONFile`, `YAMLFile`, `TOMLFile`, `DotEnvFile`, `Env`, `Args`, `Map` |
 | `sconf/bind` | reflection binder (`Unmarshaler`, `Validator`) |
-| `sconf/secret` | secret field types (`UserPass`, `Cert`) — no external deps |
+| `sconf/secret` | secret field types (`UserPass`, `Cert`) — depends only on the YAML/TOML parsers |
 | `sconf/internal/vault` | Vault client internals (`vault-client-go`) — used by the core, not imported directly |
 | `sconf/internal/flat` | the flat model and path utilities |
 
@@ -653,6 +653,21 @@ for non-standard engines:
 ```yaml
 ad_creds: ad/static-cred/svc              # auto: picks current_password
 custom:   secret/path?username_field=login&password_field=secret
+```
+
+`UserPass` can also read credentials from a **single text field of a KV
+secret**. Point it at the secret with `?field=` — the field's text is parsed as
+JSON, then YAML, then TOML (an error if none matches), and username/password
+are taken from the parsed mapping (`username_field`/`password_field` overrides
+apply to it too):
+
+```yaml
+redis: A/APP/OSH/KV/secrets?field=redis
+```
+
+```json
+// contents of the "redis" field inside the KV secret
+{"username": "svc", "password": "pw"}
 ```
 
 ### KV: three ways to consume it

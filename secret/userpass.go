@@ -1,6 +1,14 @@
 package secret
 
-import "sync/atomic"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"sync/atomic"
+
+	toml "github.com/pelletier/go-toml/v2"
+	"gopkg.in/yaml.v3"
+)
 
 // UserPass — пара логин/пароль, получаемая из Vault чтением по ПОЛНОМУ пути
 // (Method Read). Подходит для движков, у которых учётные данные читаются:
@@ -28,6 +36,19 @@ import "sync/atomic"
 // переопределить параметрами пути:
 //
 //	custom: secret/path?username_field=login&password_field=secret
+//
+// Креды можно достать и из ОДНОГО поля KV-секрета, если в нём лежит текст в
+// формате JSON, YAML или TOML с ключами username/password. Поле указывается
+// параметром field:
+//
+//	redis: A/APP/OSH/KV/secrets?field=redis
+//
+//	# содержимое поля redis в Vault (формат определяется автоматически):
+//	# {"username": "svc", "password": "pw"}
+//
+// Текст разбирается последовательно как JSON, затем YAML, затем TOML; если ни
+// один формат не подошёл — ошибка. Параметры username_field/password_field
+// применяются уже к разобранному содержимому.
 //
 // Значения читаются потокобезопасно (методы Username/Password) — sconf.Load
 // обновляет их в фоне автоматически. Интервал обновления по умолчанию —
@@ -60,15 +81,53 @@ func (u *UserPass) SecretRequest() Request {
 	return Request{Method: Read, Path: u.ref.path, Refresh: u.ref.refreshParam()}
 }
 
-// Apply раскладывает ответ Vault в снапшот логина/пароля. Имена полей ответа
-// берутся из username_field (по умолчанию "username") и правила выбора пароля
-// (см. password). Потокобезопасно — заменяет снапшот целиком.
+// Apply раскладывает ответ Vault в снапшот логина/пароля. При заданном ?field=
+// креды берутся не из полей ответа напрямую, а из текста указанного поля
+// (JSON/YAML/TOML — см. decodeMap). Имена полей берутся из username_field
+// (по умолчанию "username") и правила выбора пароля (см. password).
+// Потокобезопасно — заменяет снапшот целиком.
 func (u *UserPass) Apply(data map[string]any) error {
+	d := KVFields(data)
+	if f := u.ref.params["field"]; f != "" {
+		raw, ok := d[f]
+		if !ok {
+			return fmt.Errorf("secret: %q: no field %q (available: %s)",
+				u.ref.path, f, strings.Join(sortedKeys(d), ", "))
+		}
+		parsed, err := decodeMap(asString(raw))
+		if err != nil {
+			return fmt.Errorf("secret: %q: field %q: %w", u.ref.path, f, err)
+		}
+		d = parsed
+	}
 	u.data.Store(&userPassData{
-		username: asString(data[u.field("username_field", "username")]),
-		password: u.password(data),
+		username: asString(d[u.field("username_field", "username")]),
+		password: u.password(d),
 	})
 	return nil
+}
+
+// decodeMap разбирает текстовое значение поля секрета в отображение
+// ключ→значение, пробуя форматы по порядку: JSON, YAML, TOML. Возвращает
+// ошибку, если текст не является отображением ни в одном из форматов.
+func decodeMap(text string) (map[string]any, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, fmt.Errorf("secret: field value is empty")
+	}
+	b := []byte(text)
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err == nil && m != nil {
+		return m, nil
+	}
+	m = nil
+	if err := yaml.Unmarshal(b, &m); err == nil && m != nil {
+		return m, nil
+	}
+	m = nil
+	if err := toml.Unmarshal(b, &m); err == nil && m != nil {
+		return m, nil
+	}
+	return nil, fmt.Errorf("secret: value is not a JSON, YAML or TOML mapping")
 }
 
 // password выбирает поле пароля из ответа. Явный password_field имеет приоритет;
