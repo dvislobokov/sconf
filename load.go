@@ -9,16 +9,21 @@ import (
 	"github.com/dvislobokov/sconf/bind"
 )
 
-// ErrHelp возвращается Load, если в аргументах запрошена справка. К этому
-// моменту usage уже напечатан в stdout — вызывающему остаётся завершить
-// программу. Мирроринг поведения flag.ErrHelp из стандартной библиотеки.
+// ErrHelp сигнализирует, что в аргументах запрошена справка. Начиная с v1.7.0
+// Load сам завершает процесс (os.Exit(0)) после печати справки, поэтому в
+// обычном коде эта ошибка не наблюдается; она сохранена для совместимости —
+// существующие ветки errors.Is(err, sconf.ErrHelp) остаются корректными.
 var ErrHelp = errors.New("config: help requested")
+
+// osExit подменяется в тестах, чтобы проверить завершение по --help.
+var osExit = os.Exit
 
 // Load — основная точка входа. Она:
 //
 //  1. если в args есть флаг справки (--help и т.п.) — печатает usage,
-//     сгенерированный из T, и возвращает ErrHelp; рядом с --help можно
-//     передать --format table|env|json|yaml|toml (см. UsageFormat);
+//     сгенерированный из T (плюс встроенные флаги), и завершает процесс с
+//     кодом 0; рядом с --help можно передать --format table|env|json|yaml|toml
+//     (см. UsageFormat);
 //  2. добавляет args последним (высшим по приоритету) слоем командной строки;
 //  3. собирает конфигурацию из builder и биндит её в новое значение *T.
 //
@@ -29,12 +34,9 @@ var ErrHelp = errors.New("config: help requested")
 //	    sconf.New().
 //	        AddYAMLFile("appsettings.yaml").
 //	        AddEnvironmentVariables("APP_"),
-//	    os.Args[1:],
+//	    os.Args[1:], // по --help напечатает справку и завершит процесс
 //	)
-//	switch {
-//	case errors.Is(err, sconf.ErrHelp):
-//	    os.Exit(0)
-//	case err != nil:
+//	if err != nil {
 //	    log.Fatal(err)
 //	}
 //
@@ -60,12 +62,13 @@ func LoadContext[T any](ctx context.Context, b *Builder, args []string, opts ...
 	}
 
 	if HelpRequested(args) {
-		out, err := UsageFormat[T](helpFormat(args), builderEnvPrefix(b))
+		out, err := helpOutput[T](helpFormat(args), builderEnvPrefix(b))
 		if err != nil {
 			return nil, err
 		}
 		fmt.Fprint(os.Stdout, out)
-		return nil, ErrHelp
+		osExit(0)
+		return nil, ErrHelp // достижимо только в тестах с подменённым osExit
 	}
 	// Поля с тегом env читаются из явно названных переменных среды. Этот слой
 	// сильнее провайдеров билдера, но слабее командной строки.

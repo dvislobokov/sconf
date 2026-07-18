@@ -206,19 +206,6 @@ func TestLoadAndSection(t *testing.T) {
 	}
 }
 
-func TestLoadHelp(t *testing.T) {
-	type Settings struct {
-		Host string `default:"0.0.0.0"`
-	}
-	_, err := sconf.Load[Settings](
-		sconf.New().AddInMemory(map[string]string{"host": "x"}),
-		[]string{"--help"},
-	)
-	if !errors.Is(err, sconf.ErrHelp) {
-		t.Fatalf("ожидался ErrHelp, got %v", err)
-	}
-}
-
 func TestLoadEnumError(t *testing.T) {
 	type Settings struct {
 		Level string `enum:"debug,info"`

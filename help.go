@@ -102,6 +102,28 @@ func UsageFormat[T any](format, envPrefix string) (string, error) {
 	}
 }
 
+// builtinUsage — встроенные флаги Load, не являющиеся ключами конфигурации.
+// Печатаются в конце табличного ответа на --help; в машиночитаемые форматы
+// (env/json/yaml/toml — схема ключей) и в HTTP-хендлер usage не попадают.
+const builtinUsage = `
+Built-in flags:
+  --help, -h, -?                     print this help and exit
+  --format table|env|json|yaml|toml  help output format (use with --help)
+`
+
+// helpOutput возвращает текст ответа на --help: usage в запрошенном формате;
+// к табличному виду добавляются встроенные флаги самой Load.
+func helpOutput[T any](format, envPrefix string) (string, error) {
+	out, err := UsageFormat[T](format, envPrefix)
+	if err != nil {
+		return "", err
+	}
+	if format == "" || format == "table" {
+		out += builtinUsage
+	}
+	return out, nil
+}
+
 func usageDocs(entries []bind.Entry, envPrefix string) []usageDoc {
 	out := make([]usageDoc, 0, len(entries))
 	for _, e := range entries {

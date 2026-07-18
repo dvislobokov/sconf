@@ -10,7 +10,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -156,10 +155,8 @@ func main() {
 			AddEnvironmentVariables("APP_"),
 		os.Args[1:],
 	)
-	switch {
-	case errors.Is(err, sconf.ErrHelp):
-		os.Exit(0) // usage уже напечатан внутри Load
-	case err != nil:
+	// По --help Load сам печатает справку и завершает процесс с кодом 0.
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "config error:", err)
 		os.Exit(1)
 	}

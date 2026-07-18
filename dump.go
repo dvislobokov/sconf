@@ -71,8 +71,9 @@ func WithDumpRedact(keys ...string) DumpOption {
 // Для секции (Config.Section) печатаются только её ключи, без префикса.
 //
 // Значения секретных полей (secret.UserPass и т.п.) в конфигурации — это
-// пути в Vault, не сами секреты. Но слой AddVaultKV кладёт в конфигурацию
-// реальные значения — маскируйте их через WithDumpRedact.
+// пути в Vault, не сами секреты. Но слой AddVaultKV и plain:-значения
+// секретов кладут в конфигурацию реальные секреты — маскируйте их через
+// WithDumpRedact.
 func Dump[T any](cfg *Config, format DumpFormat, opts ...DumpOption) (string, error) {
 	var o dumpOptions
 	for _, op := range opts {

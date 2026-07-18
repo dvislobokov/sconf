@@ -88,6 +88,42 @@ func TestUsageFormatYAMLTOMLTable(t *testing.T) {
 	}
 }
 
+func TestHelpOutputListsBuiltinFlags(t *testing.T) {
+	// Ответ на --help (таблица) содержит встроенные флаги самой Load...
+	out, err := helpOutput[helpSettings]("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "--help, -h, -?") ||
+		!strings.Contains(out, "--format table|env|json|yaml|toml") {
+		t.Fatalf("help must list built-in flags:\n%s", out)
+	}
+	// ...а машиночитаемая схема ключей — нет.
+	env, err := helpOutput[helpSettings]("env", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(env, "--format") {
+		t.Fatalf("env schema must not list built-in flags:\n%s", env)
+	}
+}
+
+func TestLoadHelpExits(t *testing.T) {
+	exitCode := -1
+	prev := osExit
+	osExit = func(code int) { exitCode = code }
+	defer func() { osExit = prev }()
+
+	_, err := Load[helpSettings](New().AddInMemory(map[string]string{"host": "x"}),
+		[]string{"--help"})
+	if exitCode != 0 {
+		t.Fatalf("Load с --help должен завершать процесс с кодом 0, got %d", exitCode)
+	}
+	if err != ErrHelp {
+		t.Fatalf("после подменённого osExit ожидается ErrHelp, got %v", err)
+	}
+}
+
 func TestUsageShowsEnvTag(t *testing.T) {
 	if out := Usage[helpSettings](); !strings.Contains(out, "(env DB_HOST)") {
 		t.Fatalf("usage missing env tag:\n%s", out)

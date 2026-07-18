@@ -140,10 +140,7 @@ func main() {
             AddEnvironmentVariables("MYAPP_"),                       // env beats files
         os.Args[1:],
     )
-    switch {
-    case errors.Is(err, sconf.ErrHelp):
-        os.Exit(0) // usage already printed by Load
-    case err != nil:
+    if err != nil { // on --help, Load prints usage and exits(0) by itself
         log.Fatal(err)
     }
     log.Printf("%+v", *s)
@@ -241,7 +238,6 @@ s, err := sconf.Load[Settings](
     os.Args[1:], // or nil, if you don't want CLI args or --help
 )
 if err != nil {
-    // errors.Is(err, sconf.ErrHelp) — help was requested (usage already printed)
     log.Fatal(err)
 }
 ```
@@ -249,7 +245,8 @@ if err != nil {
 `Load[T](builder, args)`:
 
 1. if `args` contains a help flag (`--help`, `-h`, `-?`, `/?`, …), it prints the
-   usage generated from `T` and returns `sconf.ErrHelp`;
+   usage generated from `T` — followed by the built-in flags (`--help` itself
+   and `--format`) — and **exits the process with code 0**;
 2. folds `args` in as the last (highest-priority) command-line layer;
 3. builds the configuration and binds it into a fresh `*T`.
 
@@ -418,8 +415,9 @@ type Settings struct {
 
 ## Usage generation and `--help`
 
-`Load` checks for `--help` itself and prints help generated from the struct's
-fields (key path, type, `enum`, `default`, description):
+`Load` checks for `--help` itself, prints help generated from the struct's
+fields (key path, type, `enum`, `default`, description) plus the built-in
+flags, and exits the process with code 0 — no handling code needed:
 
 ```go
 type Settings struct {
@@ -430,9 +428,7 @@ type Settings struct {
 
 func main() {
     s, err := sconf.Load[Settings](sconf.New() /* ...providers... */, os.Args[1:])
-    if errors.Is(err, sconf.ErrHelp) {
-        os.Exit(0) // usage already printed by Load
-    }
+    // on --help the process has already exited(0) here
     // ...
 }
 ```
@@ -444,6 +440,10 @@ Options:
   --Host  string  (default "0.0.0.0")  listen host
   --Port  int  (default "8080")  listen port
   --Mode  string  {dev|prod}  (default "dev")  run mode
+
+Built-in flags:
+  --help, -h, -?                     print this help and exit
+  --format table|env|json|yaml|toml  help output format (use with --help)
 ```
 
 Keys are shown in command-line form (`--section:key`) — exactly how they are
@@ -839,9 +839,46 @@ VAULT_K8S_ROLE=billing-api
 
 ### Local development
 
-You don't need a running Vault to develop locally. Two options:
+You don't need a running Vault to develop locally. Three options:
 
-**1. A local secrets file (no Vault at all).** Set `VAULT_SECRETS_FILE` to a file
+**1. Values right in the config.** Instead of a Vault path, write the secret's
+fields as an ordinary nested section — the same fields Vault would return — and
+they are applied directly: no Vault environment at all, no background refresh.
+For `secret.Value` use a single `value` key:
+
+```yaml
+db_cred:                 # secret.UserPass
+  username: devuser
+  password: devpass
+api_key:                 # secret.Value
+  value: sk_test_local
+extra:                   # secret.KV
+  region: local
+  tier: dev
+tls:                     # secret.Cert
+  certificate: "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+  private_key: "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+```
+
+When a base layer sets a Vault *path* and a later layer (say
+`appsettings.local.yaml`) sets a nested *section* for the same key, **the
+section wins** — so a local override can replace production paths with real
+values without touching the base config.
+
+For one-liner contexts (a single environment variable, a CLI argument) there is
+an equivalent escape hatch: prefix the value with `plain:` — for
+`UserPass`/`KV`/`Cert` the payload is a JSON/YAML/TOML mapping, for `Value` the
+literal string:
+
+```sh
+APP_DB_CRED='plain:{"username": "devuser", "password": "devpass"}'
+APP_API_KEY=plain:sk_test_local
+```
+
+Either way the secret then lives in the configuration in clear text (and shows
+up in `Dump` — redact it with `WithDumpRedact`).
+
+**2. A local secrets file (no Vault at all).** Set `VAULT_SECRETS_FILE` to a file
 mapping each secret path to its fields — the resolver reads from it and never
 contacts Vault (no `VAULT_ADDR`, no auth). Your application code and config are
 identical to production; only the environment differs.
@@ -880,7 +917,7 @@ reference covering every secret type — `UserPass` (including credentials
 parsed from a single JSON/YAML/TOML text field), `Cert`, `KV`, `Value`, and
 `AddVaultKV` layers. Copy it to `vault.secrets` to start.
 
-**2. A dev-mode Vault.** Run `vault server -dev`, point at it, and seed the
+**3. A dev-mode Vault.** Run `vault server -dev`, point at it, and seed the
 secrets — no code changes, exercises the real client and auth:
 
 ```sh
@@ -913,10 +950,8 @@ A self-contained runnable demo (with an in-process fake Vault) lives in
 
 ```go
 s, err := sconf.Load[Settings](builder, os.Args[1:])
+// (--help never reaches here: Load prints usage and exits the process itself)
 switch {
-case errors.Is(err, sconf.ErrHelp):
-    // help requested (--help); usage already printed
-    os.Exit(0)
 case errors.Is(err, sconf.ErrBindType):
     // a value could not be converted to the field type
     // e.g.: config: cannot bind "Servers:0:Port" (value "abc") to int

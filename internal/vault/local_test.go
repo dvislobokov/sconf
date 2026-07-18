@@ -140,6 +140,49 @@ func TestEnvTakesPrecedenceOverDefaultSecretsFile(t *testing.T) {
 	}
 }
 
+func TestResolvePlainOnlySkipsVault(t *testing.T) {
+	// Все секреты заданы напрямую (plain:) — Vault не нужен вовсе: ни
+	// VAULT_ADDR, ни файла секретов.
+	withEnv(t, nil)
+
+	cfg := struct {
+		DB  secret.UserPass
+		Key secret.Value
+	}{}
+	if err := cfg.DB.UnmarshalConfig(`plain:{"username": "u", "password": "p"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Key.UnmarshalConfig("plain:sk_local"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Resolve(context.Background(), &cfg); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if cfg.DB.Username() != "u" || cfg.Key.Get() != "sk_local" {
+		t.Fatalf("got %q/%q", cfg.DB.Username(), cfg.Key.Get())
+	}
+}
+
+func TestResolveMixedPlainAndFile(t *testing.T) {
+	// Часть секретов plain, часть — из локального файла: в Vault не ходим,
+	// оба вида заполняются.
+	file := writeSecretsFile(t, "db/creds/app:\n  username: fromfile\n  password: p\n")
+	withEnv(t, map[string]string{"VAULT_SECRETS_FILE": file})
+
+	cfg := struct {
+		DB  secret.UserPass
+		Key secret.Value
+	}{}
+	_ = cfg.DB.UnmarshalConfig("db/creds/app")
+	_ = cfg.Key.UnmarshalConfig("plain:sk_local")
+	if err := Resolve(context.Background(), &cfg); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if cfg.DB.Username() != "fromfile" || cfg.Key.Get() != "sk_local" {
+		t.Fatalf("got %q/%q", cfg.DB.Username(), cfg.Key.Get())
+	}
+}
+
 func TestLocalFileTakesPrecedenceOverVault(t *testing.T) {
 	file := writeSecretsFile(t, "db/creds/app:\n  username: local\n  password: p\n")
 	// Даже если задан VAULT_ADDR, файл имеет приоритет — реального Vault нет,
