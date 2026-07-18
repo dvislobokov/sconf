@@ -790,8 +790,8 @@ the `AddVaultKV` layers. Works in Kubernetes and anywhere else.
 
 | Variable | Meaning |
 |----------|---------|
-| `VAULT_SECRETS_FILE` | local dev: read secrets from this file instead of Vault (see [Local development](#local-development)) |
-| `VAULT_ADDR` / `VAULT_URL` | server address (**required** when secret fields exist, unless `VAULT_SECRETS_FILE` is set) |
+| `VAULT_SECRETS_FILE` | local dev: read secrets from this file instead of Vault (see [Local development](#local-development)); when unset, a `vault.secrets` file in the working directory is picked up automatically |
+| `VAULT_ADDR` / `VAULT_URL` | server address (**required** when secret fields exist, unless a local secrets file is used) |
 | `VAULT_NAMESPACE` | namespace (Vault Enterprise / HCP) |
 | `VAULT_MOUNTPATH` | optional prefix prepended to every secret path |
 | `VAULT_TIMEOUT` | per-request timeout (default `30s`) |
@@ -854,6 +854,11 @@ secret/data/billing:          # KV: put the fields directly
 The file is re-read on each refresh, so editing it updates values live. It takes
 precedence over `VAULT_ADDR` if both are set — handy for overriding a single
 environment. `AddVaultKV` layers read from it too. (JSON works as well as YAML.)
+
+If `VAULT_SECRETS_FILE` is not set but a file named `vault.secrets` exists in
+the working directory, it is picked up automatically — drop one next to the
+binary (and into `.gitignore`) and run with no Vault environment at all. The
+explicit `VAULT_SECRETS_FILE` always wins over `vault.secrets`.
 
 **2. A dev-mode Vault.** Run `vault server -dev`, point at it, and seed the
 secrets — no code changes, exercises the real client and auth:

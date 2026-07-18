@@ -45,7 +45,8 @@ func KV(path string, opts ...KVOption) *kvProvider {
 
 // Load читает секрет и возвращает его поля как плоские пары путь→значение.
 // Реализует интерфейс sconf.Provider. Как и поля-секреты, в режиме локальной
-// разработки (VAULT_SECRETS_FILE) читает из файла, а не из Vault. Ожидание
+// разработки (VAULT_SECRETS_FILE либо файл vault.secrets в рабочей директории)
+// читает из файла, а не из Vault. Ожидание
 // доступности Vault включается переменными среды VAULT_WAIT /
 // VAULT_WAIT_INTERVAL (см. waitReady).
 func (p *kvProvider) Load() (map[string]string, error) {

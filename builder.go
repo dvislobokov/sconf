@@ -66,7 +66,8 @@ func (b *Builder) AddCommandLine(args []string) *Builder {
 // среды. path — полный путь секрета (для KV v2 — с сегментом data, например
 // "secret/data/myapp"). Подключение к Vault берётся из тех же переменных
 // среды, что и у полей-секретов (VAULT_ADDR, VAULT_AUTH, ...); в режиме
-// локальной разработки (VAULT_SECRETS_FILE) секрет читается из файла.
+// локальной разработки (VAULT_SECRETS_FILE либо файл vault.secrets в рабочей
+// директории) секрет читается из файла.
 func (b *Builder) AddVaultKV(path string) *Builder {
 	return b.Add(vault.KV(path))
 }

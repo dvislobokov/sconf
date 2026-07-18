@@ -14,6 +14,7 @@ package vault
 import (
 	"context"
 	"fmt"
+	"os"
 	"reflect"
 	"strconv"
 	"time"
@@ -95,10 +96,11 @@ type store interface {
 	fetch(ctx context.Context, req secret.Request) (data map[string]any, lease time.Duration, err error)
 }
 
-// newStore выбирает источник: если задан VAULT_SECRETS_FILE — локальный файл
+// newStore выбирает источник: если найден локальный файл секретов
+// (VAULT_SECRETS_FILE либо vault.secrets в рабочей директории) — читаем его
 // (в Vault не ходим, VAULT_ADDR не требуется); иначе — Vault.
 func newStore(ctx context.Context) (store, error) {
-	if path := getenv("VAULT_SECRETS_FILE"); path != "" {
+	if path := secretsFilePath(); path != "" {
 		return newFileStore(path)
 	}
 	client, cfg, err := dial(ctx)
@@ -106,6 +108,24 @@ func newStore(ctx context.Context) (store, error) {
 		return nil, err
 	}
 	return vaultStore{client: client, cfg: cfg}, nil
+}
+
+// defaultSecretsFile — имя локального файла секретов, подхватываемого из
+// рабочей директории автоматически, без переменных среды.
+const defaultSecretsFile = "vault.secrets"
+
+// secretsFilePath возвращает путь до локального файла секретов: явный
+// VAULT_SECRETS_FILE имеет приоритет; иначе — vault.secrets в рабочей
+// директории, если такой файл существует. Пустая строка — файла нет,
+// секреты читаются из Vault.
+func secretsFilePath() string {
+	if path := getenv("VAULT_SECRETS_FILE"); path != "" {
+		return path
+	}
+	if fi, err := os.Stat(defaultSecretsFile); err == nil && !fi.IsDir() {
+		return defaultSecretsFile
+	}
+	return ""
 }
 
 // resolveOne получает данные секрета из src, раскладывает их и обновляет интервал.

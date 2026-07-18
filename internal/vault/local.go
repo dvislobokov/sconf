@@ -11,8 +11,9 @@ import (
 )
 
 // fileStore — источник секретов для локальной разработки: значения берутся из
-// файла (YAML или JSON), а не из Vault. Включается переменной VAULT_SECRETS_FILE;
-// при этом VAULT_ADDR и аутентификация не требуются.
+// файла (YAML или JSON), а не из Vault. Включается переменной VAULT_SECRETS_FILE
+// либо наличием файла vault.secrets в рабочей директории; при этом VAULT_ADDR и
+// аутентификация не требуются.
 //
 // Формат файла — отображение «полный путь секрета → его поля» (те же пути, что
 // и в конфиге приклада). Поля кладутся так, как их отдал бы Vault:
@@ -40,7 +41,7 @@ type fileStore struct {
 func newFileStore(path string) (store, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("vault: read local secrets file (VAULT_SECRETS_FILE=%q): %w", path, err)
+		return nil, fmt.Errorf("vault: read local secrets file %q: %w", path, err)
 	}
 	var m map[string]map[string]any
 	if err := yaml.Unmarshal(raw, &m); err != nil {

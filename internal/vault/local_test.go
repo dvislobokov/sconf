@@ -86,6 +86,60 @@ secret/data/app:
 	}
 }
 
+// chdir переходит в dir на время теста (t.Chdir недоступен: минимальная
+// версия Go — 1.21).
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+}
+
+func TestDefaultSecretsFile(t *testing.T) {
+	dir := t.TempDir()
+	content := "db/creds/app:\n  username: fromdefault\n  password: p\n"
+	if err := os.WriteFile(filepath.Join(dir, defaultSecretsFile), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	// Переменные среды не заданы вовсе — файл vault.secrets подхватывается сам.
+	withEnv(t, nil)
+
+	cfg := struct{ DB secret.UserPass }{}
+	_ = cfg.DB.UnmarshalConfig("db/creds/app")
+	if err := Resolve(context.Background(), &cfg); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if cfg.DB.Username() != "fromdefault" {
+		t.Fatalf("username = %q", cfg.DB.Username())
+	}
+}
+
+func TestEnvTakesPrecedenceOverDefaultSecretsFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, defaultSecretsFile),
+		[]byte("db/creds/app:\n  username: fromdefault\n  password: p\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	file := writeSecretsFile(t, "db/creds/app:\n  username: fromenv\n  password: p\n")
+	withEnv(t, map[string]string{"VAULT_SECRETS_FILE": file})
+
+	cfg := struct{ DB secret.UserPass }{}
+	_ = cfg.DB.UnmarshalConfig("db/creds/app")
+	if err := Resolve(context.Background(), &cfg); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if cfg.DB.Username() != "fromenv" {
+		t.Fatalf("username = %q", cfg.DB.Username())
+	}
+}
+
 func TestLocalFileTakesPrecedenceOverVault(t *testing.T) {
 	file := writeSecretsFile(t, "db/creds/app:\n  username: local\n  password: p\n")
 	// Даже если задан VAULT_ADDR, файл имеет приоритет — реального Vault нет,
