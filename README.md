@@ -875,6 +875,11 @@ the working directory, it is picked up automatically — drop one next to the
 binary (and into `.gitignore`) and run with no Vault environment at all. The
 explicit `VAULT_SECRETS_FILE` always wins over `vault.secrets`.
 
+See [vault.secrets.example](vault.secrets.example) for a fully commented
+reference covering every secret type — `UserPass` (including credentials
+parsed from a single JSON/YAML/TOML text field), `Cert`, `KV`, `Value`, and
+`AddVaultKV` layers. Copy it to `vault.secrets` to start.
+
 **2. A dev-mode Vault.** Run `vault server -dev`, point at it, and seed the
 secrets — no code changes, exercises the real client and auth:
 
